@@ -4,17 +4,108 @@ version:             0.1.0.0
 #description:
 homepage:            https://github.com/githubuser/ivy#readme
 license:             BSD3
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2019 Author name here
-category:            Web
+author:              Rohit Ramesh
+maintainer:          rkr@berkeley.edu
+copyright:           2019 Rohit Ramesh
+#category:
 extra-source-files:
 - README.md
 
 dependencies:
   - base >= 4.7 && < 5
+  - intro
+  - tasty
+  - tasty-discover
+  - tasty-hunit
+  - tasty-hedgehog
+  - hedgehog
+  - recursion-schemes
 
-executables:
-  ivy:
-    source-dirs:      src
-    main:             Main.hs
+library:
+  source-dirs: src
+  exposed-modules:
+    - Ivy.Prelude
+    - Ivy.Scratchpad
+
+tests:
+  tasty:
+    main: TastyDriver.hs
+    source-dirs:
+      - test
+      - src
+
+default-extensions:
+  NoImplicitPrelude
+  ApplicativeDo
+  BangPatterns
+  ConstraintKinds
+  DataKinds
+  DefaultSignatures
+  DeriveDataTypeable
+  DeriveFoldable
+  DeriveFunctor
+  DeriveGeneric
+  DeriveLift
+  DeriveTraversable
+  DerivingStrategies
+  DuplicateRecordFields
+  EmptyCase
+  EmptyDataDecls
+  ExistentialQuantification
+  ExtendedDefaultRules
+  FlexibleContexts
+  FlexibleInstances
+  FunctionalDependencies
+  GADTs
+  GeneralizedNewtypeDeriving
+  ImplicitParams
+  InstanceSigs
+  KindSignatures
+  LambdaCase
+  MultiParamTypeClasses
+  MultiWayIf
+  NamedFieldPuns
+  NoImplicitPrelude
+  NoMonomorphismRestriction
+  OverloadedLabels
+  OverloadedLists
+  OverloadedStrings
+  PackageImports
+  PatternSynonyms
+  PolyKinds
+  QuasiQuotes
+  QuantifiedConstraints
+  RankNTypes
+  RecordWildCards
+  RecursiveDo
+  ScopedTypeVariables
+  StandaloneDeriving
+  TemplateHaskell
+  TupleSections
+  TypeApplications
+  TypeFamilies
+  TypeFamilyDependencies
+  TypeOperators
+  ViewPatterns
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Werror
+  - -Wsemigroup
+  #- -Wredundant-constraints
+  - -fno-warn-orphans
+  - -fno-warn-type-defaults
+  - -fno-warn-name-shadowing
+  - -fno-warn-unticked-promoted-constructors
+  - -fno-warn-unused-local-binds # TODO :: Re-enable when you feel like cleaning
+  - -fno-warn-unused-imports # TODO :: Re-enable when you feel like cleaning
+                             #         up your imports.
+  # - -fprint-potential-instances
+  - -ddump-cs-trace
+  - -ddump-splices
+  - -ddump-to-file
+  - -fprint-typechecker-elaboration
+  #- -prof

@@ -4,27 +4,60 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 03ae7e9e8339994706c917f9c3d5f68568adf17aeb6c4f9543ef065713e4d59b
+-- hash: 748e2dff075f97b85716b590877cbd3b3124e19e7a597d04ccbd4a5c96ce9ecd
 
 name:           ivy
 version:        0.1.0.0
-category:       Web
 homepage:       https://github.com/githubuser/ivy#readme
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2019 Author name here
+author:         Rohit Ramesh
+maintainer:     rkr@berkeley.edu
+copyright:      2019 Rohit Ramesh
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
     README.md
 
-executable ivy
-  main-is: Main.hs
+library
+  exposed-modules:
+      Ivy.Prelude
+      Ivy.Scratchpad
   other-modules:
       Paths_ivy
   hs-source-dirs:
       src
+  default-extensions: NoImplicitPrelude ApplicativeDo BangPatterns ConstraintKinds DataKinds DefaultSignatures DeriveDataTypeable DeriveFoldable DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable DerivingStrategies DuplicateRecordFields EmptyCase EmptyDataDecls ExistentialQuantification ExtendedDefaultRules FlexibleContexts FlexibleInstances FunctionalDependencies GADTs GeneralizedNewtypeDeriving ImplicitParams InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude NoMonomorphismRestriction OverloadedLabels OverloadedLists OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes QuantifiedConstraints RankNTypes RecordWildCards RecursiveDo ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators ViewPatterns
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , hedgehog
+    , intro
+    , recursion-schemes
+    , tasty
+    , tasty-discover
+    , tasty-hedgehog
+    , tasty-hunit
+  default-language: Haskell2010
+
+test-suite tasty
+  type: exitcode-stdio-1.0
+  main-is: TastyDriver.hs
+  other-modules:
+      Ivy.Prelude
+      Ivy.Scratchpad
+      Paths_ivy
+  hs-source-dirs:
+      test
+      src
+  default-extensions: NoImplicitPrelude ApplicativeDo BangPatterns ConstraintKinds DataKinds DefaultSignatures DeriveDataTypeable DeriveFoldable DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable DerivingStrategies DuplicateRecordFields EmptyCase EmptyDataDecls ExistentialQuantification ExtendedDefaultRules FlexibleContexts FlexibleInstances FunctionalDependencies GADTs GeneralizedNewtypeDeriving ImplicitParams InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude NoMonomorphismRestriction OverloadedLabels OverloadedLists OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes QuantifiedConstraints RankNTypes RecordWildCards RecursiveDo ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators ViewPatterns
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
+  build-depends:
+      base >=4.7 && <5
+    , hedgehog
+    , intro
+    , recursion-schemes
+    , tasty
+    , tasty-discover
+    , tasty-hedgehog
+    , tasty-hunit
   default-language: Haskell2010

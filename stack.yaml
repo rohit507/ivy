@@ -37,7 +37,12 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
-# extra-deps: []
+
+extra-deps:
+  - intro-0.5.2.1
+  - writer-cps-mtl-0.1.1.6
+  - writer-cps-transformers-0.5.6.0
+  - tasty-hedgehog-0.2.0.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
@@ -62,3 +67,24 @@ packages:
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+
+build:
+  #library-profiling: true
+  #executable-profiling: true
+  #copy-bins: false
+  #prefetch: false
+  #keep-going: false
+  #keep-tmp-files: false
+
+  # NOTE: global usage of haddock can cause build failures when documentation is
+  # incorrectly formatted.  This could also affect scripts which use stack.
+  haddock: false
+  haddock-arguments:
+    # Additional arguments passed to haddock, --haddock-arguments
+    haddock-args:
+      - "--verbosity=DEAFENING"
+      - "--no-warnings"
+      - "--quickjump"
+  open-haddocks: true    # --open
+  haddock-deps: false     # if unspecified, defaults to true if haddock is set
+  haddock-internal: true
