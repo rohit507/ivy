@@ -12,12 +12,91 @@ module Ivy.Scratchpad where
 
 import Ivy.Prelude
 
+import Data.Coerce
+
+class (Monad m) => MonadLat m where
+
+  type IsLatErr m :: * -> Constraint
+
+  top :: (IsLatErr m e) => e -> m a
+  default top :: (MonadError e m, IsLatErr m e) => e -> m a
+  top = throwError
+
+  val :: a -> m a
+  default val :: (Monad m) => a -> m a
+  val = pure
+
+  bot :: m a
+  default bot :: (MonadPlus m) => m a
+  bot = empty
+
+
+class POrd l where
+
+  lessThanOrEq :: (MonadLat m) => l -> l -> m Bool
+
+  lessThan :: (MonadLat m) => l -> l -> m Bool
+
+  greaterThanOrEq :: (MonadLat m) => l -> l -> m Bool
+
+  greaterThan :: (MonadLat m) => l -> l -> m Bool
+
+  equalTo :: (MonadLat m) => l -> l -> m Bool
+
+  notEqualTo :: (MonadLat m) => l -> l -> m Bool
+
+class LatticeMember l where
+
+  latBottom :: l
+
+  latJoin :: (MonadLat m) => l -> l -> m l
+
+  latMeet :: (MonadLat m) => l -> l -> m l
+
+class POrd1 l where
+
+  liftLessThanOrEq :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+  liftLessThan :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+  liftGreaterThanOrEq :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+  liftGreaterThan :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+  liftEqualTo :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+  liftNotEqualTo :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+
+class LatticeMember1 l where
+
+  liftLatBottom :: (LatticeMember p) => l p
+
+  liftLatJoin :: (MonadLat m, LatticeMember p) => l p -> l p -> m (l p)
+
+  liftLatMeet :: (MonadLat m, LatticeMember p) => l p -> l p -> m (l p)
+
 infixr 0 :-^
 
 data a :-^ b where
-  UCF :: (a -> Lat b)
+
+  UCFInt ::(LatticeMember a, LatticeMember b) =>
+    (forall m. (MonadLat m) => a -> m b) -> a :-^ b
+
+  UCFId :: (a :~: b) -> a :-^ b
 
 instance Category (:-^) where
+
+  id = UCFId Refl
+
+  (UCFId  r) . (UCFInt a) = UCFInt $ fmap (castWith r) . a
+  (UCFInt a) . (UCFId  r) = UCFInt $ a . castWith r
+  (UCFInt a) . (UCFInt b) = UCFInt (b >=> a)
+
+
+
+{-
+
+
   id = UCF id
   (UCF f) . (UCF g) = UCF $ f . g
 
@@ -122,3 +201,4 @@ uOr a b = fall a <|> fall b <|> base
 
     base :: m Bool
     base = (||) <$> a <$> b
+-}
