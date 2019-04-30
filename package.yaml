@@ -20,6 +20,7 @@ dependencies:
   - tasty-hedgehog
   - hedgehog
   - recursion-schemes
+  - data-reify
 
 library:
   source-dirs: src

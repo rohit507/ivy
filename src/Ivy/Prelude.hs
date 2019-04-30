@@ -15,6 +15,6 @@ module Ivy.Prelude (
 import Intro as P
 import Control.Category as P
 import Data.Dynamic as P
-import Data.Functor.Base as P hiding (head, tail)
 import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
+import Data.Reify as P

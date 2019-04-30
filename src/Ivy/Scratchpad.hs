@@ -12,17 +12,16 @@ module Ivy.Scratchpad where
 
 import Ivy.Prelude
 
-infixr 0 (:-^)
+infixr 0 :-^
 
 data a :-^ b where
-  UCF :: (a -> b)
+  UCF :: (a -> Lat b)
 
 instance Category (:-^) where
   id = UCF id
   (UCF f) . (UCF g) = UCF $ f . g
 
 data Lat a where
-  Top :: Dynamic -> Lat a
   Val :: a -> Lat a
   Bot :: Lat a
 
@@ -30,46 +29,96 @@ data LTerm l k where
   T :: Base l (LTerm l k) -> LTerm l k
   V :: k -> LTerm l k
 
-class LatticeMember l where
+
+
+class (Eq l) => PartiallyOrdered l where
 
   isBot :: l -> Bool
 
-  leqLT   :: LTerm l k -> LTerm l k -> Lat Bool
-  leqLT = undefined
+  -- Okay, so these will just pattern match
 
-  joinLT  :: LTerm l k -> LTerm l k -> Lat (LTerm l (Either k (k,k))
-  joinLT = undefined
+  lessThanOrEq   :: l -> l -> Lat Bool
+  lessThanOrEq = undefined
 
-  meetLT :: LTerm l k -> LTerm l k -> Lat (LTerm l (Either k (k,k))
-  meetLT = undefined
+  lessThan :: l -> l -> Lat Bool
+  lessThan = undefined
 
-  leqL :: l -> l -> Lat Bool
-  leqL = undefined
+  greaterThanOrEq :: l -> l -> Lat Bool
+  greaterThanOrEq = undefined
 
-  joinL :: l -> l -> Lat l
-  joinL = undefined
+  greaterThan :: l -> l -> Lat Bool
+  greaterThan = undefined
 
-  meetL :: l -> l -> Lat l
-  meetL = undefined
+  equalTo :: l -> l -> Lat Bool
+  equalTo = undefined
 
-  {-# MINIMAL isBot , (leqLT, joinLT, meetLT) | (leqL , joinL , meetL) #-}
+  notEqualTo :: l -> l -> Lat Bool
+  notEqualTo = undefined
 
-class (Monad m, MonadError e m, LatMapErr e) => MonadLatticeMap m where
+class (PartiallyOrdered l) => Lattice l where
 
-  type LatMapErr :: * -> Constraint
+  joinLT  :: (Monad m) => (l -> l -> m (Lat l)) -> l -> l -> m (Lat l)
+  joinLT = undefined -- TODO :: Assemble a full term if possible, use Data.Reify
+                     --        to decompose result into its constituent parts
+
+  meetLT :: (Monad m) => (l -> l -> m (Lat l)) -> l -> l -> m (Lat l)
+  meetLT = undefined -- TODO :: Same as joinLT
+
+  -- -- Given that the implementer of the following needs to make things work
+  -- -- for every monad they don't really have leeway to do anything that they
+  -- -- couldn't in a pure function, except to give us a hook
+
+  -- leqL :: (Monad m) => (l -> l -> m Bool) -> l -> l -> m Bool
+  -- leqL = undefined -- The idea is that
+
+  -- joinL :: (Monad m) => (l -> l -> m l) -> l -> l -> m (Lat l)
+  -- joinL = undefined
+
+  -- meetL :: (Monad m) => (l -> l -> m l) -> l -> l -> m (Lat l)
+  -- meetL = undefined
+
+  -- {-# MINIMAL isBot , (leqLT, joinLT, meetLT) | (leqL , joinL , meetL) #-}
+
+class (Monad m) => MonadLatticeMap m where
+
+  type LatMapErr m :: Constraint
   data Key m l :: *
 
-  newLat :: (LatticeMember l)
-         => LTerm l (Key m l) -> m (Key m l)
+  newLat :: (Lattice l) => l -> m (Key m l)
 
-  bindLat :: (LatticeMember l)
-          => Key m l -> LTerm l (Key m l) -> m (Key m l)
+  bindLat :: (Lattice l) => Key m l -> l -> m (Key m l)
 
-  getLat :: (LatticeMember l)
-         => Key m l -> m (LTerm l (Key ml))
+  getLat :: (Lattice l) => Key m l -> m l
 
-  equals :: (LatticeMember l)
-         => Key m l -> Key m l -> m (Key m l)
+  equals :: (Lattice l) => Key m l -> Key m l -> m (Key m l)
 
-  subsumes :: (LatticeMember l)
-           => Key m l
+  subsumes :: (Lattice l) => Key m l -> Key m l -> m Bool
+
+class (MonadLatticeMap m) => MonadLatticeProp m where
+
+  run :: Key m a -> (forall n. MonadLatticeMap n => a -> n ()) -> m ()
+
+  watch :: Key m a -> [a -> m ()] -> m ()
+
+
+uAnd :: MonadLatticeProp m => Lat Bool -> Lat Bool -> Lat Bool
+uAnd a b = fall a <|> fall b <|> base
+
+  where
+
+    fall :: m Bool -> m Bool
+    fall = undefined
+
+    base :: m Bool
+    base = (&&) <$> a <$> b
+
+uOr :: MonadLatticeProp m => Lat Bool -> Lat Bool -> Lat Bool
+uOr a b = fall a <|> fall b <|> base
+
+  where
+
+    fall :: m Bool -> m Bool
+    fall b = undefined
+
+    base :: m Bool
+    base = (||) <$> a <$> b

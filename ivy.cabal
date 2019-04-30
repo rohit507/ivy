@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 748e2dff075f97b85716b590877cbd3b3124e19e7a597d04ccbd4a5c96ce9ecd
+-- hash: d76654dc1fae81409dbb8e80f7e0f34792bbe50013d7b8b4870a53a117697666
 
 name:           ivy
 version:        0.1.0.0
@@ -30,6 +30,7 @@ library
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , data-reify
     , hedgehog
     , intro
     , recursion-schemes
@@ -53,6 +54,7 @@ test-suite tasty
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , data-reify
     , hedgehog
     , intro
     , recursion-schemes
