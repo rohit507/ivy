@@ -30,6 +30,9 @@ class (Monad m) => MonadLat m where
   default bot :: (MonadPlus m) => m a
   bot = empty
 
+data LTerm l k where
+  T :: l (LTerm l k) -> LTerm l k
+  V :: k -> LTerm l k
 
 class POrd l where
 
@@ -45,7 +48,7 @@ class POrd l where
 
   notEqualTo :: (MonadLat m) => l -> l -> m Bool
 
-class LatticeMember l where
+class Lattice l where
 
   latBottom :: l
 
@@ -55,131 +58,129 @@ class LatticeMember l where
 
 class POrd1 l where
 
-  liftLessThanOrEq :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftLessThanOrEq :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-  liftLessThan :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftLessThan :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-  liftGreaterThanOrEq :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftGreaterThanOrEq :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-  liftGreaterThan :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftGreaterThan :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-  liftEqualTo :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftEqualTo :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-  liftNotEqualTo :: (MonadLat m, POrd p) => l p -> l p -> m Bool
+  liftNotEqualTo :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m Bool
 
-class LatticeMember1 l where
+class (Functor l) => LatticeF l where
 
-  liftLatBottom :: (LatticeMember p) => l p
+  liftLatBottom :: p -> l p
 
-  liftLatJoin :: (MonadLat m, LatticeMember p) => l p -> l p -> m (l p)
+  liftLatJoin :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
 
-  liftLatMeet :: (MonadLat m, LatticeMember p) => l p -> l p -> m (l p)
+  liftLatMeet :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
+
+{-
+class (Functor (l k)) => LatticeKF k l where
+
+  liftLatBottomWithKey :: p -> l k p
+
+  liftLatJoinWithKey :: (MonadLat m, Lattice p) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
+
+  liftLatMeetWithKey :: (MonadLat m, Lattice p) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
+-}
 
 infixr 0 :-^
 
 data a :-^ b where
 
-  UCFInt ::(LatticeMember a, LatticeMember b) =>
+  UCFInt ::(Lattice a, Lattice b) =>
     (forall m. (MonadLat m) => a -> m b) -> a :-^ b
 
-  UCFId :: (a :~: b) -> a :-^ b
+  UCFId :: (a ~ b) => a :-^ b
+
+getUCF :: (Lattice a, Lattice b) => (a :-^ b) -> (forall m. MonadLat m => a -> m b)
+getUCF (UCFInt a) = a
+getUCF UCFId = pure
 
 instance Category (:-^) where
+  id = UCFId
 
-  id = UCFId Refl
-
-  (UCFId  r) . (UCFInt a) = UCFInt $ fmap (castWith r) . a
-  (UCFInt a) . (UCFId  r) = UCFInt $ a . castWith r
+  UCFId . a = a
+  a . UCFId = a
   (UCFInt a) . (UCFInt b) = UCFInt (b >=> a)
 
-
+pattern UCF :: (Lattice a, Lattice b) => (forall m. MonadLat m => a -> m b) -> a :-^ b
+pattern UCF f <- (getUCF -> f)
+  where
+    UCF f = UCFInt f
 
 {-
-
-
-  id = UCF id
-  (UCF f) . (UCF g) = UCF $ f . g
-
-data Lat a where
-  Val :: a -> Lat a
-  Bot :: Lat a
-
-data LTerm l k where
-  T :: Base l (LTerm l k) -> LTerm l k
-  V :: k -> LTerm l k
-
-
-
-class (Eq l) => PartiallyOrdered l where
-
-  isBot :: l -> Bool
-
-  -- Okay, so these will just pattern match
-
-  lessThanOrEq   :: l -> l -> Lat Bool
-  lessThanOrEq = undefined
-
-  lessThan :: l -> l -> Lat Bool
-  lessThan = undefined
-
-  greaterThanOrEq :: l -> l -> Lat Bool
-  greaterThanOrEq = undefined
-
-  greaterThan :: l -> l -> Lat Bool
-  greaterThan = undefined
-
-  equalTo :: l -> l -> Lat Bool
-  equalTo = undefined
-
-  notEqualTo :: l -> l -> Lat Bool
-  notEqualTo = undefined
-
-class (PartiallyOrdered l) => Lattice l where
-
-  joinLT  :: (Monad m) => (l -> l -> m (Lat l)) -> l -> l -> m (Lat l)
-  joinLT = undefined -- TODO :: Assemble a full term if possible, use Data.Reify
-                     --        to decompose result into its constituent parts
-
-  meetLT :: (Monad m) => (l -> l -> m (Lat l)) -> l -> l -> m (Lat l)
-  meetLT = undefined -- TODO :: Same as joinLT
-
-  -- -- Given that the implementer of the following needs to make things work
-  -- -- for every monad they don't really have leeway to do anything that they
-  -- -- couldn't in a pure function, except to give us a hook
-
-  -- leqL :: (Monad m) => (l -> l -> m Bool) -> l -> l -> m Bool
-  -- leqL = undefined -- The idea is that
-
-  -- joinL :: (Monad m) => (l -> l -> m l) -> l -> l -> m (Lat l)
-  -- joinL = undefined
-
-  -- meetL :: (Monad m) => (l -> l -> m l) -> l -> l -> m (Lat l)
-  -- meetL = undefined
-
-  -- {-# MINIMAL isBot , (leqLT, joinLT, meetLT) | (leqL , joinL , meetL) #-}
-
 class (Monad m) => MonadLatticeMap m where
 
-  type LatMapErr m :: Constraint
   data Key m l :: *
 
-  newLat :: (Lattice l) => l -> m (Key m l)
+  bindLat  :: (Lattice l) => Key m l -> l -> m (Key m l)
 
-  bindLat :: (Lattice l) => Key m l -> l -> m (Key m l)
+  getLat   :: (Lattice l) => Key m l -> m l
 
-  getLat :: (Lattice l) => Key m l -> m l
-
-  equals :: (Lattice l) => Key m l -> Key m l -> m (Key m l)
+  -- keys are merged and values are joined
+  equals   :: (Lattice l) => Key m l -> Key m l -> m (Key m l)
 
   subsumes :: (Lattice l) => Key m l -> Key m l -> m Bool
+-}
 
-class (MonadLatticeMap m) => MonadLatticeProp m where
+class (Monad m) => MonadLatticeMapF m where
 
-  run :: Key m a -> (forall n. MonadLatticeMap n => a -> n ()) -> m ()
+  data KeyF m (l :: * -> *) :: *
 
-  watch :: Key m a -> [a -> m ()] -> m ()
+  putLatF  :: (LatticeF l) => LTerm l (KeyF m l) -> m (KeyF m l)
 
+  bindLatF  :: (LatticeF l) => KeyF m l -> LTerm l (KeyF m l) -> m (KeyF m l)
 
+  getLatF   :: (LatticeF l) => KeyF m l -> m (LTerm l (KeyF m l))
+
+  equalsF   :: (LatticeF l) => KeyF m l -> KeyF m l -> m (KeyF m l)
+
+  subsumesF :: (LatticeF l) => KeyF m l -> KeyF m l -> m Bool
+
+-- | This is a list of changes to the map that we might be able to apply if
+--   neccesary.
+data Edit k l
+  = Bind (k l) (LTerm l (k l))
+  | Equals (k l) (k l)
+  | Subsumes (k l) (k l)
+
+-- | As we execute an op over our system, we should be producing transactions as an
+--   intermediate state, which allows us to chop things up as neccesary
+data Trans k a where
+
+  Parallel:: [Trans k a] -> Trans k a
+  Watch :: k a -> (k a -> a -> Trans k b) -> Trans k b
+  Run :: [Edit k l] -> Trans k () -> Trans k ()
+  Done :: Trans k ()
+  Hold :: Trans k ()
+
+{-
+-- | Do we ever need to allow the type parameter to be different here?
+--   basically I want some way to take sets of keys
+class (Monad m) => MonadLatticeMapKF m where
+
+  data KeyKF m (l :: * -> * -> *) :: *
+
+  bindLatKF  :: (LatticeKF (KeyKF m l) l)
+    => KeyKF m l -> l (KeyKF m l) (KeyKF m l) -> m (KeyKF m l)
+
+  getLatKF   :: (LatticeKF (KeyKF m l) l)
+    => KeyKF m l -> m (l (KeyKF m l) (KeyKF m l))
+
+  -- keys are merged and values are joined
+  equalsKF   :: (LatticeKF (KeyKF m l) l)
+    => KeyKF m l -> KeyKF m l -> m (KeyKF m l)
+
+  subsumesKF :: (LatticeKF (KeyKF m l) l)
+    => KeyKF m l -> KeyKF m l -> m Bool
+-}
+
+{-
 uAnd :: MonadLatticeProp m => Lat Bool -> Lat Bool -> Lat Bool
 uAnd a b = fall a <|> fall b <|> base
 
@@ -201,4 +202,5 @@ uOr a b = fall a <|> fall b <|> base
 
     base :: m Bool
     base = (||) <$> a <$> b
+
 -}
