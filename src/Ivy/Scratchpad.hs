@@ -14,7 +14,7 @@ import Ivy.Prelude
 import Data.Monoid
 import qualified GHC.Base as Base (mzero, mplus)
 
-class (Monad m) => MonadLat m where
+class (Alternative m, Monad m) => MonadLat m where
 
   type IsLatErr m :: * -> Constraint
 
@@ -176,6 +176,8 @@ class (Monad m, LatticeF l) => MonadLatMapF m l where
 --          them.
 data Edit m k where
 
+  Put :: (MonadLatMapF m l) => LTerm l k -> Edit m k
+
   Bind :: (MonadLatMapF m l) => k -> LTerm l k -> Edit m k
 
   Equals :: k -> k -> Edit m k
@@ -205,35 +207,55 @@ data Transaction m k where
   -- | This transaction represents a series of concrete operations that
   --   we can perform on a set of lattice elements, and the transaction that
   --   happens when we
-  Run :: [Edit m k] -> Transaction m k -> Transaction m k
+  Run :: F (Edit m) ()  -> Transaction m k
 
-  -- | This is a transaction which is complete. No additional executions are
-  --   necessary and the transaction itself can be discarded.
-  Done :: Transaction m k
+instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
-instance (Eq k, Hashable k, Applicative m) => Semigroup (Transaction m k) where
-
-  -- We use the Semigroup instance of `Ap` (in Data.Monoid) to allow the
+  -- NOTE :: We use the Semigroup instance of `Alt` (in Data.Monoid) to allow the
   -- semigroup instance of HashMap to work over the transactions we return.
-  (Watch m) <> (Watch m') = Watch . unAp $ wrapAp m <> wrapAp m'
+  -- With the appropriate choice of alternative instance (`Compose [] Lat`?)
+  -- we should be able to extract a list of all the new transactions that were
+  -- created.
+  --
+  -- The big problem here is with duplication of rules. If a rule creates
+  -- another rule, should we delete the first?
+  --
+  -- In the case where create different rules based on what a particular
+  -- variable resolves to. Well, it should be an upwards closed function that
+  -- differentiates between cases so if one choice is taken the other shouldn't
+  -- be.
+  --
+  -- I guess the case that's weird is if the created rules aren't a flat lattice,
+  -- instead becoming something else yet. We might need to keep track of child
+  -- rules as we run (each parent rule should have at most one child per object?)
+  --
+  (Watch m) <> (Watch m') = Watch . unAlt $ wrapAlt m <> wrapAlt m'
     where
-      wrapAp :: HashMap k (k -> m r) -> HashMap k (k -> Ap m r)
-      wrapAp = map (map Ap)
+      wrapAlt :: HashMap k (k -> m r) -> HashMap k (k -> Alt m r)
+      wrapAlt = map (map Alt)
 
-      unAp :: HashMap k (k -> Ap m r) -> HashMap k (k -> m r)
-      unAp = map (map getAp)
+      unAlt :: HashMap k (k -> Alt m r) -> HashMap k (k -> m r)
+      unAlt = map (map getAlt)
 
-  -- Edits should be pretty declarative
-  (Run e m) <> (Run e' m') = Run (e <> e') (m <> m')
+  -- When we have just have two free monads of edits we can concat them to get
+  -- the resulting output.
+  (Run f) <> (Run f') = Run $ f >> f'
 
-  Run e m <> a = Run e (m <> a)
-  a <> Run e m = Run e (m <> a)
+  -- If we have a run and a watch, we watch on the relevant variables and
+  -- append the potential side-effects together. Done this way, if we
+  -- can create a sandbox for the edit operation, we can run an operation
+  -- inside the sandbox and only commit them if certain conditions are met.
+  -- (Hmm, flattened sandboxes == provenance == predicated operations. Just
+  --  add an interpretation function that will turn a forall into a rule.)
+  -- Making decisions with provenance seems like a bad idea.
+  Run e   <> Watch m = Watch . map (\ fk k -> (Run e <>) <$> fk k) $ m
+  Watch m <> Run e   = Watch . map (\ fk k -> (Run e <>) <$> fk k) $ m
 
-  Done <> a = a
-  a <> Done = a
 
-instance (Eq k, Hashable k, Applicative m) => Monoid (Transaction m k) where
-  mempty = Done
+instance (Eq k, Hashable k, Alternative m) => Monoid (Transaction m k) where
+  mempty = Run (return ())
+
+
 
 {-
 -- | Do we ever need to allow the type parameter to be different here?
@@ -256,12 +278,16 @@ class (Monad m) => MonadLatticeMapKF m where
     => KeyKF m l -> KeyKF m l -> m Bool
 -}
 
--- | Sadly, without some way to introspect whether a term is forced, we can't
+-- * Sadly, without some way to introspect whether a term is forced, we can't
 --   have the nicer interface which allows us to write more or less pure
 --   functions and have their fall-through properties inferred.
 --   instead we use the lesser of two evils and work with the lattice elements
 --   more directly.
-uAnd :: (Alternative m, MonadLat m) => m Bool -> m Bool -> m Bool
+
+-- | This definition of And is a race between three separate result conditions
+--   the two fallthrough cases if a or b are false, and the completed case when
+--   both are true.
+uAnd :: (MonadLat m) => m Bool -> m Bool -> m Bool
 uAnd a b = (a >>= fall) <|> (b >>= fall) <|> ((&&) <$> a <*> b)
 
   where
@@ -270,7 +296,7 @@ uAnd a b = (a >>= fall) <|> (b >>= fall) <|> ((&&) <$> a <*> b)
     fall True  = bot
 
 
-uOr :: (Alternative m, MonadLat m) => m Bool -> m Bool -> m Bool
+uOr :: (MonadLat m) => m Bool -> m Bool -> m Bool
 uOr a b = (a >>= fall) <|> (b >>= fall) <|> ((&&) <$> a <*> b)
 
   where

@@ -19,6 +19,7 @@ dependencies:
   - tasty-hunit
   - tasty-hedgehog
   - hedgehog
+  - free
   - recursion-schemes
   - data-reify
 
