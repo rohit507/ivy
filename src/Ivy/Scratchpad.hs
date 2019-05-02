@@ -141,14 +141,14 @@ pattern UCF f <- (getUCF -> f)
 class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 
   data Key     m v :: *
-  data Term    m v :: *
+  data LatMemb m v :: *
   type LatCons m v :: Constraint
 
-  putLat   :: (LatCons m v) => Term m v -> m (Key m v)
+  putLat   :: (LatCons m v) => LatMemb m v -> m (Key m v)
 
-  getLat   :: (LatCons m v) => Key  m v -> m (Term m v)
+  getLat   :: (LatCons m v) => Key  m v -> m (LatMemb m v)
 
-  bindLat  :: (LatCons m v) => Key  m v -> Term m v -> m (Key m v)
+  bindLat  :: (LatCons m v) => Key  m v -> Lat m v -> m (Key m v)
 
   equals   :: (LatCons m v) => Key  m v -> Key  m v -> m (Key m v)
 
@@ -162,10 +162,10 @@ class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 data Edit m a where
 
   Put      :: (MonadLatMap v m, LatCons m v)
-    => Term m v -> Edit m (Key m v)
+    => LatMemb m v -> Edit m (Key m v)
 
   Bind     :: (MonadLatMap v m, LatCons m v)
-    => Key m v -> Term m v -> Edit m (Key m v)
+    => Key m v -> LatMemb m v -> Edit m (Key m v)
 
   Equals   :: (MonadLatMap v m, LatCons m v)
     => Key m v -> Key m v -> Edit m (Key m v)
@@ -240,6 +240,86 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
 instance (Eq k, Hashable k, Alternative m) => Monoid (Transaction m k) where
   mempty = Run $ pure ()
+
+-- | This is a monad for triggering actions when triggers `t` are triggered.
+--   It doesn't specify enting about the run model (seq, parrelel,
+--   single-threaded, multi-threaded, prioritized, etc...)
+class (Monad m) => MonadTrigger t m where
+
+  -- | This will take an action that is triggered when a particular key
+  --   has changed, and add it to a queue.
+  addHook :: t -> (t -> m ()) -> m ()
+
+  -- | This will pop some pending hook from the queue of available hooks.
+  --   This should remove the hook from the queue and return Nothing if there
+  --   are no remaining hooks to trigger.
+  popHook :: m (Maybe (t, m ()))
+
+  -- | This will trigger a set of hooks, moving them into the (abstract) run
+  --   queue to be executed as needed.
+  trigger :: t -> m ()
+
+  -- FIXME :: Do we need introspection functions?
+
+-- | This monad can handle graphs of relationships between Vertices of a graph
+--   and terms in a language (semi-hyperedge things) that describe relationships
+--   between vertices.
+class (Monad m) => MonadRelGraph m where
+
+  type Rel m :: *
+  type Vert m :: *
+
+  type RelCons r m :: Constraint
+
+  -- | Given some relationship between vertices, adds it to the graph, and
+  --   returns a reference to said relationship.
+  addRel :: (Relcons r m) => (r (Vert m)) -> m (Rel m)
+
+  -- | Given a particular vertex will retrieve a relationship that
+  --   involve said vertex. FIXME :: figure out whether we want to handle
+  --   non-determo
+  getRel :: Vert m -> m [Rel m]
+
+
+class (Monad m) => MonadProp m where
+
+  -- | getKey and getVert define an isomorphism between vertices on the term
+  --   graph and keys. getKey here should only fail when the type of v
+  --   requested is incorrect.
+  getKey :: forall v. (MonadRelGraph m, MonadLatMap v m, LatCons m v)
+    => Vert m -> Maybe (Key m v)
+
+  getVert :: forall v. (MonadRelGraph m, MonadLatMap v m, LatCons m v)
+    => Key m v -> Vert m
+
+  -- | Will run all rules until the
+  quiesce :: m ()
+
+  -- | A rule:
+  --
+  --    - Has an initial vertex to which it applies
+  --    - Can read the lat member associated with a vertex
+  --    - can see a single relation associated with the vertex (non-determinism
+  --      is handled elsewhere)
+  --    - Can add relations to the graph.
+  --    - Can define whether lattice members are equal or subsume each other.
+  --    - Should only every be upwards closed (i.e it can only increase the
+  --      number of vertices or relations in the graph, and only push
+  --      lattice values upwards.
+  --    - Should die on pattern match failures and guard hitting fail. Other
+  --      failures (i.e guards reading bottom) should just cause the transaction
+  --      to abort and be reinserted as a hook.
+  addRule :: (Vert m -> Transaction m ()) -> m ()
+
+
+
+
+
+
+
+
+
+
 
 
 -- * Sadly, without some way to introspect whether a term is forced, we can't
