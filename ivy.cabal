@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: fd9b2880561215b135814b25d9c7faa635dd135e7ffb9c141422006cf0dfcdc4
+-- hash: 8ab767b1dd2b19fd02c8cb66f3c1008aad19ceee1f8d7ca83359893008e49a81
 
 name:           ivy
 version:        0.1.0.0
@@ -33,6 +33,7 @@ library
     , free
     , hedgehog
     , intro
+    , logging
     , recursion-schemes
     , tasty
     , tasty-discover
@@ -58,6 +59,7 @@ test-suite tasty
     , free
     , hedgehog
     , intro
+    , logging
     , recursion-schemes
     , tasty
     , tasty-discover

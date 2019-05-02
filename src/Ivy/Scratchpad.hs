@@ -103,13 +103,11 @@ class (POrdF l) => LatticeF l where
   liftLatJoin   :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
   liftLatMeet   :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
 
-{-
 class (Functor (l k)) => LatticeKF k l where
 
-  liftLatBottomWithKey :: p -> l k
+  liftLatBottomWithKey :: p -> l k p
   liftLatJoinWithKey :: (MonadLat m) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
   liftLatMeetWithKey :: (MonadLat m) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
--}
 
 infixr 0 :-^
 
@@ -141,44 +139,109 @@ pattern UCF f <- (getUCF -> f)
     UCF f = UCFInt f
 
 {-
-class (Monad m) => MonadLatticeMap m where
-
-  data Key m l :: *
-
-  bindLat  :: (Lattice l) => Key m l -> l -> m (Key m l)
-
-  getLat   :: (Lattice l) => Key m l -> m l
-
-  -- keys are merged and values are joined
-  equals   :: (Lattice l) => Key m l -> Key m l -> m (Key m l)
-
-  subsumes :: (Lattice l) => Key m l -> Key m l -> m Bool
+type family Key (m :: * -> *) (v :: k) :: * where
+  Key m (a :: *)           = KeyV m a
+  Key m (a :: * -> *)      = KeyF m a
+  Key m (a :: * -> * -> *) = KeyKF m a
 -}
 
-class (Monad m, LatticeF l) => MonadLatMapF m l where
+type PutLatFunc      v k m = v -> m k
+type BindLatFunc     v k m = k -> v -> m k
+type GetLatFunc      v k m = k -> m v
+type EqualsLatFunc   v k m = k -> k -> m k
+type SubsumesLatFunc v k m = k -> k -> m Bool
 
-  data KeyF m (l :: * -> *) :: *
+class (Monad m) => MonadLatMapV m where
 
-  putLatF  :: LTerm l (KeyF m l) -> m (KeyF m l)
+  data KeyV m (v :: *) :: *
+  type LatVCons m (v :: *) :: Constraint
 
-  bindLatF  :: KeyF m l -> LTerm l (KeyF m l) -> m (KeyF m l)
+  putLatV   :: (LatVCons m v) => PutLatFunc v (KeyV m v) m
 
-  getLatF   :: KeyF m l -> m (LTerm l (KeyF m l))
+  bindLatV  :: (LatVCons m v) => BindLatFunc v (KeyV m v) m
 
-  equalsF   :: KeyF m l -> KeyF m l -> m (KeyF m l)
+  getLatV   :: (LatVCons m v) => GetLatFunc v (KeyV m v) m
 
-  subsumesF ::  KeyF m l -> KeyF m l -> m Bool
+  -- keys are merged and values are joined
+  equalsV   :: (LatVCons m v) => EqualsLatFunc v (KeyV m v) m
+
+  subsumesV :: (LatVCons m v) => SubsumesLatFunc v (KeyV m v) m
+
+class (Monad m) => MonadLatMapF m where
+
+  data KeyF m (v :: * -> *) :: *
+  type LatFCons m (v :: * -> *) :: Constraint
+
+  putLatF   :: (LatFCons m v) => PutLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
+
+  bindLatF  :: (LatFCons m v) => BindLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
+
+  getLatF   :: (LatFCons m v) => GetLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
+
+  equalsF   :: (LatFCons m v) => EqualsLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
+
+  subsumesF :: (LatFCons m v) => SubsumesLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
+
+-- | Do we ever need to allow the type parameter to be different here?
+--   basically I want some way to take sets of keys
+class (Monad m) => MonadLatMapKF m where
+
+  data KeyKF m (v :: * -> * -> *) :: *
+  type LatKFCons m (v :: * -> * -> *) :: Constraint
+
+  putLatKF :: (LatKFCons m v)
+    => PutLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
+
+  bindLatKF  :: (LatKFCons m v)
+    => BindLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
+
+  getLatKF   :: (LatKFCons m v)
+    => GetLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
+
+  -- keys are merged and values are joined
+  equalsKF   :: (LatKFCons m v)
+    => EqualsLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
+
+  subsumesKF :: (LatKFCons m v)
+    => SubsumesLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
+
+
+
+class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
+
+  data Key     m v :: *
+  type Term    m v :: *
+  type LatCons m v :: Constraint
+
+  putLat   :: (LatCons m v) => Term m v -> m (Key m v)
+
+  getLat   :: (LatCons m v) => Key  m v -> m (Term m v)
+
+  bindLat  :: (LatCons m v) => Key  m v -> Term m v -> m (Key m v)
+
+  equals   :: (LatCons m v) => Key  m v -> Key  m v -> m (Key m v)
+
+  subsumes :: (LatCons m v) => Key  m v -> Key  m v -> m Bool
+
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
 --
 --   TODO :: Stuff like adding new terms in our parent language when we implement
 --          them.
-data Edit m k where
+data Edit m a where
 
-  Put :: (MonadLatMapF m l) => LTerm l k -> Edit m k
+  PutV :: (MonadLatMapV m, LatVCons m v) => v -> Edit m (KeyV m v)
 
-  Bind :: (MonadLatMapF m l) => k -> LTerm l k -> Edit m k
+  BindV :: (MonadLatMapV m, LatVCons m v) => KeyV m v -> v -> Edit m (KeyV m v)
+
+  PutF :: (MonadLatMapF m, LatFCons m v) => LTerm v k -> Edit m (KeyF m v)
+
+  BindF :: (MonadLatMapF m, LatFCons m v) => k -> LTerm v k -> Edit m (KeyF m v)
+
+  PutKF :: (MonadLatMapKF m, LatKFCons m v) => LTerm (v (KeyKF v_) k -> Edit m
+
+  BindKF :: (MonadLatMapKF m, LatKFCons m v) => k -> LTerm v k -> Edit m
 
   Equals :: k -> k -> Edit m k
 
@@ -255,28 +318,14 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 instance (Eq k, Hashable k, Alternative m) => Monoid (Transaction m k) where
   mempty = undefined
 
+-- | This monad says we're capable adding hooks to
+class (MonadLatMapF m) => MonadProp m where
 
 
-{-
--- | Do we ever need to allow the type parameter to be different here?
---   basically I want some way to take sets of keys
-class (Monad m) => MonadLatticeMapKF m where
+-- | This monad is capable of adding terms to a language
+class (Monad m) => MonadTermGraph l m
 
-  data KeyKF m (l :: * -> * -> *) :: *
 
-  bindLatKF  :: (LatticeKF (KeyKF m l) l)
-    => KeyKF m l -> l (KeyKF m l) (KeyKF m l) -> m (KeyKF m l)
-
-  getLatKF   :: (LatticeKF (KeyKF m l) l)
-    => KeyKF m l -> m (l (KeyKF m l) (KeyKF m l))
-
-  -- keys are merged and values are joined
-  equalsKF   :: (LatticeKF (KeyKF m l) l)
-    => KeyKF m l -> KeyKF m l -> m (KeyKF m l)
-
-  subsumesKF :: (LatticeKF (KeyKF m l) l)
-    => KeyKF m l -> KeyKF m l -> m Bool
--}
 
 -- * Sadly, without some way to introspect whether a term is forced, we can't
 --   have the nicer interface which allows us to write more or less pure
