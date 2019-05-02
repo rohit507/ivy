@@ -1,10 +1,8 @@
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.31.1.
+-- This file has been generated from package.yaml by hpack version 0.28.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: d76654dc1fae81409dbb8e80f7e0f34792bbe50013d7b8b4870a53a117697666
+-- hash: fd9b2880561215b135814b25d9c7faa635dd135e7ffb9c141422006cf0dfcdc4
 
 name:           ivy
 version:        0.1.0.0
@@ -15,6 +13,7 @@ copyright:      2019 Rohit Ramesh
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
+cabal-version:  >= 1.10
 extra-source-files:
     README.md
 
@@ -27,10 +26,11 @@ library
   hs-source-dirs:
       src
   default-extensions: NoImplicitPrelude ApplicativeDo BangPatterns ConstraintKinds DataKinds DefaultSignatures DeriveDataTypeable DeriveFoldable DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable DerivingStrategies DuplicateRecordFields EmptyCase EmptyDataDecls ExistentialQuantification ExtendedDefaultRules FlexibleContexts FlexibleInstances FunctionalDependencies GADTs GeneralizedNewtypeDeriving ImplicitParams InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude NoMonomorphismRestriction OverloadedLabels OverloadedLists OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes QuantifiedConstraints RankNTypes RecordWildCards RecursiveDo ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators ViewPatterns
-  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
     , data-reify
+    , free
     , hedgehog
     , intro
     , recursion-schemes
@@ -51,10 +51,11 @@ test-suite tasty
       test
       src
   default-extensions: NoImplicitPrelude ApplicativeDo BangPatterns ConstraintKinds DataKinds DefaultSignatures DeriveDataTypeable DeriveFoldable DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable DerivingStrategies DuplicateRecordFields EmptyCase EmptyDataDecls ExistentialQuantification ExtendedDefaultRules FlexibleContexts FlexibleInstances FunctionalDependencies GADTs GeneralizedNewtypeDeriving ImplicitParams InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude NoMonomorphismRestriction OverloadedLabels OverloadedLists OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes QuantifiedConstraints RankNTypes RecordWildCards RecursiveDo ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators ViewPatterns
-  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -fno-warn-orphans -fno-warn-type-defaults -fno-warn-name-shadowing -fno-warn-unticked-promoted-constructors -fno-warn-unused-local-binds -fno-warn-unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
     , data-reify
+    , free
     , hedgehog
     , intro
     , recursion-schemes

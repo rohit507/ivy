@@ -239,7 +239,7 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
   -- When we have just have two free monads of edits we can concat them to get
   -- the resulting output.
-  (Run f) <> (Run f') = Run $ f >> f'
+  (Run f) <> (Run f') = undefined -- Run $ f >> f'
 
   -- If we have a run and a watch, we watch on the relevant variables and
   -- append the potential side-effects together. Done this way, if we
@@ -253,7 +253,7 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
 
 instance (Eq k, Hashable k, Alternative m) => Monoid (Transaction m k) where
-  mempty = Run (return ())
+  mempty = undefined
 
 
 

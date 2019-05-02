@@ -97,13 +97,18 @@ ghc-options:
   - -Wincomplete-uni-patterns
   - -Werror
   - -Wsemigroup
-  #- -Wredundant-constraints
-  - -fno-warn-orphans
-  - -fno-warn-type-defaults
-  - -fno-warn-name-shadowing
-  - -fno-warn-unticked-promoted-constructors
-  - -fno-warn-unused-local-binds # TODO :: Re-enable when you feel like cleaning
-  - -fno-warn-unused-imports # TODO :: Re-enable when you feel like cleaning
+  # Some of the flags enabled by Wall and propmoted by Werror really should
+  # only be warnings when developing. A proper build on the other hand should
+  # have no warnings attached
+  - -Wwarn=redundant-constraints
+  - -Wwarn=unused-matches
+  - -Wwarn=deprecations
+  - -Wwarn=unused-local-binds # TODO :: Re-enable when you feel like cleaning
+  - -Wwarn=unused-imports # TODO :: Re-enable when you feel like cleaning
+  # - -fno-warn-orphans
+  # - -fno-warn-type-defaults
+  # - -fno-warn-name-shadowing
+  # - -fno-warn-unticked-promoted-constructors
                              #         up your imports.
   # - -fprint-potential-instances
   - -ddump-cs-trace
