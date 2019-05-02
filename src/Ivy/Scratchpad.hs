@@ -138,79 +138,10 @@ pattern UCF f <- (getUCF -> f)
   where
     UCF f = UCFInt f
 
-{-
-type family Key (m :: * -> *) (v :: k) :: * where
-  Key m (a :: *)           = KeyV m a
-  Key m (a :: * -> *)      = KeyF m a
-  Key m (a :: * -> * -> *) = KeyKF m a
--}
-
-type PutLatFunc      v k m = v -> m k
-type BindLatFunc     v k m = k -> v -> m k
-type GetLatFunc      v k m = k -> m v
-type EqualsLatFunc   v k m = k -> k -> m k
-type SubsumesLatFunc v k m = k -> k -> m Bool
-
-class (Monad m) => MonadLatMapV m where
-
-  data KeyV m (v :: *) :: *
-  type LatVCons m (v :: *) :: Constraint
-
-  putLatV   :: (LatVCons m v) => PutLatFunc v (KeyV m v) m
-
-  bindLatV  :: (LatVCons m v) => BindLatFunc v (KeyV m v) m
-
-  getLatV   :: (LatVCons m v) => GetLatFunc v (KeyV m v) m
-
-  -- keys are merged and values are joined
-  equalsV   :: (LatVCons m v) => EqualsLatFunc v (KeyV m v) m
-
-  subsumesV :: (LatVCons m v) => SubsumesLatFunc v (KeyV m v) m
-
-class (Monad m) => MonadLatMapF m where
-
-  data KeyF m (v :: * -> *) :: *
-  type LatFCons m (v :: * -> *) :: Constraint
-
-  putLatF   :: (LatFCons m v) => PutLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
-
-  bindLatF  :: (LatFCons m v) => BindLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
-
-  getLatF   :: (LatFCons m v) => GetLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
-
-  equalsF   :: (LatFCons m v) => EqualsLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
-
-  subsumesF :: (LatFCons m v) => SubsumesLatFunc (LTerm v (KeyF m v)) (KeyF m v) m
-
--- | Do we ever need to allow the type parameter to be different here?
---   basically I want some way to take sets of keys
-class (Monad m) => MonadLatMapKF m where
-
-  data KeyKF m (v :: * -> * -> *) :: *
-  type LatKFCons m (v :: * -> * -> *) :: Constraint
-
-  putLatKF :: (LatKFCons m v)
-    => PutLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
-
-  bindLatKF  :: (LatKFCons m v)
-    => BindLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
-
-  getLatKF   :: (LatKFCons m v)
-    => GetLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
-
-  -- keys are merged and values are joined
-  equalsKF   :: (LatKFCons m v)
-    => EqualsLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
-
-  subsumesKF :: (LatKFCons m v)
-    => SubsumesLatFunc (LTerm (v (KeyKF m v)) (KeyKF m v)) (KeyKF m v) m
-
-
-
 class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 
   data Key     m v :: *
-  type Term    m v :: *
+  data Term    m v :: *
   type LatCons m v :: Constraint
 
   putLat   :: (LatCons m v) => Term m v -> m (Key m v)
@@ -227,28 +158,20 @@ class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
 --
---   TODO :: Stuff like adding new terms in our parent language when we implement
---          them.
+--   When we use this within a free monad we have a
 data Edit m a where
 
-  PutV :: (MonadLatMapV m, LatVCons m v) => v -> Edit m (KeyV m v)
+  Put      :: (MonadLatMap v m, LatCons m v)
+    => Term m v -> Edit m (Key m v)
 
-  BindV :: (MonadLatMapV m, LatVCons m v) => KeyV m v -> v -> Edit m (KeyV m v)
+  Bind     :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Term m v -> Edit m (Key m v)
 
-  PutF :: (MonadLatMapF m, LatFCons m v) => LTerm v k -> Edit m (KeyF m v)
+  Equals   :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m (Key m v)
 
-  BindF :: (MonadLatMapF m, LatFCons m v) => k -> LTerm v k -> Edit m (KeyF m v)
-
-  PutKF :: (MonadLatMapKF m, LatKFCons m v) => LTerm (v (KeyKF v_) k -> Edit m
-
-  BindKF :: (MonadLatMapKF m, LatKFCons m v) => k -> LTerm v k -> Edit m
-
-  Equals :: k -> k -> Edit m k
-
-  Subsumes :: k -> k -> Edit m k
-
-deriving instance Functor (Edit m)
-
+  Subsumes :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m Bool
 
 -- | A Transaction is a suspended computation over the map of terms. When
 --   it suspends it could be:
@@ -302,7 +225,7 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
   -- When we have just have two free monads of edits we can concat them to get
   -- the resulting output.
-  (Run f) <> (Run f') = undefined -- Run $ f >> f'
+  (Run f) <> (Run f') = Run $ f *> f'
 
   -- If we have a run and a watch, we watch on the relevant variables and
   -- append the potential side-effects together. Done this way, if we
@@ -316,15 +239,7 @@ instance (Eq k, Hashable k, Alternative m) => Semigroup (Transaction m k) where
 
 
 instance (Eq k, Hashable k, Alternative m) => Monoid (Transaction m k) where
-  mempty = undefined
-
--- | This monad says we're capable adding hooks to
-class (MonadLatMapF m) => MonadProp m where
-
-
--- | This monad is capable of adding terms to a language
-class (Monad m) => MonadTermGraph l m
-
+  mempty = Run $ pure ()
 
 
 -- * Sadly, without some way to introspect whether a term is forced, we can't
