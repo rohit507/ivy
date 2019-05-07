@@ -19,14 +19,21 @@ class (POrd l) => Lattice l where
   latJoin :: (MonadLat m) => l -> l -> m l
   latMeet :: (MonadLat m) => l -> l -> m l
 
-
 class (POrdF l) => LatticeF l where
   liftLatBottom :: p -> l p
   liftLatJoin   :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
   liftLatMeet   :: (MonadLat m) => (p -> p -> m p) -> l p -> l p -> m (l p)
 
-class (Functor (l k)) => LatticeKF k l where
+instance (Functor l, LatticeF l, Lattice p) => Lattice (DropF l p) where
+  latBottom  = DF $ liftLatBottom latBottom
+  latJoin (DF a) (DF b) = DF <$> liftLatJoin latJoin a b
+  latMeet (DF a) (DF b) = DF <$> liftLatMeet latMeet a b
 
-  liftLatBottomWithKey :: p -> l k p
-  liftLatJoinWithKey :: (MonadLat m) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
-  liftLatMeetWithKey :: (MonadLat m) => (p -> p -> m p) -> l k p -> l k p -> m (l k p)
+dropBot :: (Functor l, LatticeF l, Lattice p) => l p
+dropBot = unDF latBottom
+
+dropJoin :: (Functor l, LatticeF l, Lattice p, MonadLat m) => l p -> l p -> m (l p)
+dropJoin a b = unDF <$> latJoin (DF a) (DF b)
+
+dropMeet :: (Functor l, LatticeF l, Lattice p, MonadLat m) => l p -> l p -> m (l p)
+dropMeet a b = unDF <$> latMeet (DF a) (DF b)

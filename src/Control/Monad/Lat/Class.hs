@@ -12,10 +12,11 @@ module Control.Monad.Lat.Class where
 
 import Ivy.Prelude
 
-
 class (Alternative m, Monad m) => MonadLat m where
 
-  type IsLatErr m :: * -> Constraint
+  -- FIXME :: Is this really necessary? Or can we just have a
+  --          well defined error type for each monad?
+  type IsLatErr m e :: Constraint
 
   top :: (IsLatErr m e) => e -> m a
   default top :: (MonadError e m, IsLatErr m e) => e -> m a
