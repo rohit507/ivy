@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 8ab767b1dd2b19fd02c8cb66f3c1008aad19ceee1f8d7ca83359893008e49a81
+-- hash: ac2db1b6da2fa0e7dae0848746e0d952adc43ac8ca6887034af613a1207e1780
 
 name:           ivy
 version:        0.1.0.0
@@ -22,6 +22,17 @@ library
       Ivy.Prelude
       Ivy.Scratchpad
   other-modules:
+      Control.Monad.Lat.Class
+      Control.Monad.LatMap.Class
+      Control.Monad.Prop.Class
+      Control.Monad.TermGraph.Class
+      Control.Monad.Trigger.Class
+      Data.Lat
+      Data.Lattice
+      Data.POrd
+      Data.POrd.Rebinds
+      Data.Term
+      Data.UCF
       Paths_ivy
   hs-source-dirs:
       src
@@ -45,6 +56,17 @@ test-suite tasty
   type: exitcode-stdio-1.0
   main-is: TastyDriver.hs
   other-modules:
+      Control.Monad.Lat.Class
+      Control.Monad.LatMap.Class
+      Control.Monad.Prop.Class
+      Control.Monad.TermGraph.Class
+      Control.Monad.Trigger.Class
+      Data.Lat
+      Data.Lattice
+      Data.POrd
+      Data.POrd.Rebinds
+      Data.Term
+      Data.UCF
       Ivy.Prelude
       Ivy.Scratchpad
       Paths_ivy
