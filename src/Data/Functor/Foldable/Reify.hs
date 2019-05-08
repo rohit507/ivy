@@ -19,12 +19,13 @@ module Data.Functor.Foldable.Reify (
   , showTGraph
   ) where
 
-import EDGPrelude
+import Ivy.Prelude
 import Data.Reify
 import Data.Reify.Graph
 import Data.Functor.Foldable
-import Data.HashMap.Strict (HashMap)
-import Data.HashMap.Strict as HashMap
+import Data.Functor (fmap)
+-- import Data.HashMap.Strict (HashMap)
+-- import Data.HashMap.Strict as HashMap
 import Data.List (sortOn)
 
 -- import Data.Functor.Compose
@@ -57,6 +58,8 @@ showTGraph (TGraph netlist start) = unlines $ lets ++ [ins]
     lets = zipWith (++)
       ("let ": repeat "    ")
       [show u ++ " = " ++ show e | (u,e) <- sortOn fst netlist]
+
+    ins :: String
     ins = "  in " ++ show start
 
 instance (Functor g, Functor h) => Functor (ComposeDeRef g h) where
@@ -100,11 +103,11 @@ reifyTraverse g = separateGraph <$> reifyGraph (CMR g)
 
   where
 
-    missingG = error "Did not find outer traversable g in list of terms."
-    gIsRight = error "Outermost element is not the traversable g"
-    hIsLeft  = error "Inner element is not a member of type `DeRef h Unique`."
+    missingG = panic "Did not find outer traversable g in list of terms."
+    gIsRight = panic "Outermost element is not the traversable g"
+    hIsLeft  = panic "Inner element is not a member of type `DeRef h Unique`."
 
-    getG t gu = case EDGPrelude.lookup gu t of
+    getG t gu = case lookup gu t of
       Nothing -> missingG
       Just (CDR (Right _)) -> gIsRight
       Just (CDR (Left v)) -> v
