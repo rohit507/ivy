@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e191d69784fba8e014693940884c70c7641af0cc15c79585d8fc5b3b9c7ef9b5
+-- hash: 123611f9b5c2e1030a279e5f8a8a0651d1c7ba5f77c7356d1c4b90d6154e9f8a
 
 name:           ivy
 version:        0.1.0.0
@@ -27,6 +27,7 @@ library
       Control.Monad.Prop.Class
       Control.Monad.TermGraph.Class
       Control.Monad.Trigger.Class
+      Data.Functor.Foldable.Reify
       Data.Lat
       Data.Lattice
       Data.POrd
@@ -51,6 +52,7 @@ library
     , tasty-discover
     , tasty-hedgehog
     , tasty-hunit
+    , text
   default-language: Haskell2010
 
 test-suite tasty
@@ -63,6 +65,7 @@ test-suite tasty
       Control.Monad.Prop.Class
       Control.Monad.TermGraph.Class
       Control.Monad.Trigger.Class
+      Data.Functor.Foldable.Reify
       Data.Lat
       Data.Lattice
       Data.POrd
@@ -90,4 +93,5 @@ test-suite tasty
     , tasty-discover
     , tasty-hedgehog
     , tasty-hunit
+    , text
   default-language: Haskell2010

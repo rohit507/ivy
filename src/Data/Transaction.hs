@@ -21,16 +21,14 @@ import Data.Functor (fmap)
 --
 --   Importantly, you can compose transactions in parallel (if m has an
 --   alternative instance) and in serial (if f has an applicative instance)
-data Transaction t f m a where
+data Transaction t f m where
 
-  Watch :: HashMap t (t -> m (Transaction t f m a)) -> Transaction t f m a
+  Watch :: HashMap t (t -> m (Transaction t f m)) -> Transaction t f m
 
-  Run :: f () -> Transaction t f m ()
-
-  Pure :: a -> Transaction t f m a
+  Run :: f () -> Transaction t f m
 
 instance (Eq t, Hashable t, Alternative m, Applicative f)
-  => Semigroup (Transaction t f m a) where
+  => Semigroup (Transaction t f m) where
 
   -- NOTE :: We use the Semigroup instance of `Alt` (in Data.Monoid) to allow the
   -- semigroup instance of HashMap to work over the transactions we return.
@@ -74,12 +72,20 @@ instance (Eq t, Hashable t, Alternative m, Applicative f)
 
 
 instance (Eq t, Hashable t, Alternative m, Applicative f)
-  => Monoid (Transaction t f m a) where
+  => Monoid (Transaction t f m) where
 
   mempty = Run $ pure ()
 
+
+-- TODO :: I'm not confident this is the right monad instance for
+--         transactions. The goal is to, get to stopping points
+--         that are predicated on the return of some trigger.
 newtype TransactT t f m a
   = TransactT { getTransact :: m (Transaction t f m, a) }
+
+runTransactT :: (Eq t, Hashable t, Applicative f, Alternative m, Monad m)
+             => TransactT t f m () -> m (Transaction t f m)
+runTransactT = map fst . getTransact
 
 instance Functor m => Functor (TransactT t f m) where
   fmap f (TransactT m) = TransactT $ (\ (a,b) -> (a, f b)) <$> m
@@ -98,6 +104,6 @@ instance (Eq t, Hashable t, Applicative f, Alternative m, Monad m)
   => Monad (TransactT t f m) where
 
   TransactT ma >>= f = TransactT $ do
-    (t, a) <- ma
+    (t,  a) <- ma
     (t', b) <- getTransact . f $ a
     pure (t <> t', b)

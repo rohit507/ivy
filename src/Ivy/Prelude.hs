@@ -14,7 +14,6 @@ module Ivy.Prelude (
 ) where
 
 import Intro as P
-import Control.Category as P
 import Data.Dynamic as P
 import Data.Bifoldable as P
 import Data.Bitraversable as P
@@ -22,6 +21,7 @@ import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
 import Data.Reify as P
 import Control.Monad.Free.Church as P
+import GHC.Exts as P (fromListN)
 
 import Data.Functor as B
 
@@ -62,4 +62,4 @@ instance Foldable f => Foldable ((::=) f) where
   foldr f d (a ::= b) = f a (foldr f d b)
 
 instance Traversable f => Traversable ((::=) f) where
-  sequenceA (a ::= b) = (flip (::=)) <$> sequenceA b <*> a
+  sequenceA (a ::= b) = flip (::=) <$> sequenceA b <*> a

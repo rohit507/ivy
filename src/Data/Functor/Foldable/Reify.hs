@@ -21,6 +21,7 @@ module Data.Functor.Foldable.Reify (
 
 import Ivy.Prelude
 import Data.Reify
+import qualified Text
 import Data.Reify.Graph
 import Data.Functor.Foldable
 import Data.Functor (fmap)
