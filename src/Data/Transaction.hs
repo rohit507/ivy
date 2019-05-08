@@ -82,8 +82,7 @@ instance (Eq t, Hashable t, Alternative m, Applicative f)
 --         that are predicated on the return of some trigger.
 --
 --         Instead of this, we probably want a definition of bind which
---         packs the "next" operation into the watch term in the previous
---         operation somehow.
+--         packs the "next" operation into the bound watch term somehow.
 newtype TransactT t f m a
   = TransactT { getTransact :: m (Transaction t f m, a) }
 
