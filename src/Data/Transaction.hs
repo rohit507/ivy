@@ -80,6 +80,10 @@ instance (Eq t, Hashable t, Alternative m, Applicative f)
 -- TODO :: I'm not confident this is the right monad instance for
 --         transactions. The goal is to, get to stopping points
 --         that are predicated on the return of some trigger.
+--
+--         Instead of this, we probably want a definition of bind which
+--         packs the "next" operation into the watch term in the previous
+--         operation somehow.
 newtype TransactT t f m a
   = TransactT { getTransact :: m (Transaction t f m, a) }
 
