@@ -16,18 +16,22 @@ import Ivy.Prelude
 -- | This monad can handle graphs of relationships between Vertices of a graph
 --   and terms in a language (semi-hyperedge things) that describe relationships
 --   between vertices.
+--
+--   FIXME :: Do we need to have some operation to get the details of a
+--           relationship?
 class (Monad m) => MonadTermGraph m where
 
-  type Rel m :: *
+  type Term m :: *
   type Vert m :: *
 
-  type RelCons (r :: * -> *) m :: Constraint
+  type TermCons (t :: * -> *) m :: Constraint
 
   -- | Given some relationship between vertices, adds it to the graph, and
   --   returns a reference to said relationship.
-  addTerm :: (RelCons r m) => (r (Vert m)) -> m (Rel m)
+  addTerm :: (TermCons t m) => (t (Vert m)) -> m (Term m)
 
-  -- | Given a particular vertex will retrieve a relationship that
-  --   involve said vertex. FIXME :: figure out whether we want to handle
-  --   non-determo
-  getTerms :: Vert m -> m [Rel m]
+  -- | Given a particular vertex will retrieve relationships that
+  --   involve said vertex.
+  --
+  --   FIXME :: Consider having the default version pre-filter the Rels somehow?
+  getTerms :: Vert m -> m [Term m]

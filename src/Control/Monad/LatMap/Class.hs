@@ -21,10 +21,10 @@ class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 
   putLat   :: (LatCons m v) => LatMemb m v -> m (Key m v)
 
-  getLat   :: (LatCons m v) => Key  m v -> m (LatMemb m v)
+  getLat   :: (LatCons m v) => Key m v -> m (LatMemb m v)
 
-  bindLat  :: (LatCons m v) => Key  m v -> LatMemb m v -> m (Key m v)
+  bindLat  :: (LatCons m v) => Key m v -> LatMemb m v -> m (Key m v)
 
-  equals   :: (LatCons m v) => Key  m v -> Key  m v -> m (Key m v)
+  equals   :: (LatCons m v) => Key m v -> Key  m v -> m (Key m v)
 
-  subsumes :: (LatCons m v) => Key  m v -> Key  m v -> m Bool
+  subsumes :: (LatCons m v) => Key m v -> Key  m v -> m Bool

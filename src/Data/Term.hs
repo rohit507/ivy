@@ -12,8 +12,8 @@ module Data.Term where
 
 import Ivy.Prelude
 
-data LTerm l k where
-  T :: l (LTerm l k) -> LTerm l k
-  V :: k -> LTerm l k
+data RTerm l k where
+  T :: l (RTerm l k) -> RTerm l k
+  V :: k -> RTerm l k
 
-deriving instance (Functor l) => Functor (LTerm l)
+deriving instance (Functor l) => Functor (RTerm l)
