@@ -54,8 +54,8 @@ class (Monad m) => MonadProp m where
 --   When we use this within a free monad we have a
 data Edit m a where
 
-  AddTerm :: (MonadTermGraph m, RelCons r m)
-    => r (Vert m) -> Edit m (Rel m)
+  AddTerm :: (MonadTermGraph m, TermCons r m)
+    => r (Vert m) -> Edit m (Term m)
 
   Put      :: (MonadLatMap v m, LatCons m v)
     => LatMemb m v -> Edit m (Key m v)

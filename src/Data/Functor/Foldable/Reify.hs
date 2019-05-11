@@ -21,10 +21,10 @@ module Data.Functor.Foldable.Reify (
 
 import Ivy.Prelude
 import Data.Reify
-import qualified Text
 import Data.Reify.Graph
 import Data.Functor.Foldable
 import Data.Functor (fmap)
+import qualified Data.Text as Text
 -- import Data.HashMap.Strict (HashMap)
 -- import Data.HashMap.Strict as HashMap
 import Data.List (sortOn)
@@ -53,15 +53,15 @@ newtype ComposeWrap (g :: * -> *) h = CW h
 data TGraph g h = TGraph { netlist :: [(Unique, h Unique)]
                      , start :: g Unique}
 
-showTGraph :: (Show (g Int), Show (h Int)) => TGraph g h -> String
-showTGraph (TGraph netlist start) = unlines $ lets ++ [ins]
+showTGraph :: (Show (g Int), Show (h Int)) => TGraph g h -> Text
+showTGraph (TGraph netlist start) = Text.unlines $ lets <> [ins]
   where
-    lets = zipWith (++)
+    lets = zipWith (<>)
       ("let ": repeat "    ")
-      [show u ++ " = " ++ show e | (u,e) <- sortOn fst netlist]
+      [show u <> " = " <> show e | (u,e) <- sortOn fst netlist]
 
-    ins :: String
-    ins = "  in " ++ show start
+    ins :: Text
+    ins = "  in " <> show start
 
 instance (Functor g, Functor h) => Functor (ComposeDeRef g h) where
   fmap f (CDR (Left g)) = CDR . Left $ fmap f g
@@ -114,11 +114,11 @@ reifyTraverse g = separateGraph <$> reifyGraph (CMR g)
       Just (CDR (Left v)) -> v
 
     removeLeft _ (a, CDR (Right s)) = [(a,s)]
-    removeLeft g (a, CDR (Left  _))
-      | a == g = []
+    removeLeft g' (a, CDR (Left  _))
+      | a == g' = []
       | otherwise = hIsLeft
 
-    separateGraph (Graph t g) = TGraph (t >>= removeLeft g) (getG t g)
+    separateGraph (Graph t g') = TGraph (t >>= removeLeft g') (getG t g')
 
 reifyRecursives :: (Traversable g, Traversable (Base h), Recursive h)
                 => g h -> IO (TGraph g (Base h))

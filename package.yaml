@@ -21,6 +21,7 @@ dependencies:
   - tasty-hedgehog
   - hedgehog
   - free
+  - containers
   - recursion-schemes
   - data-reify
   - logging

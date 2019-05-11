@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 123611f9b5c2e1030a279e5f8a8a0651d1c7ba5f77c7356d1c4b90d6154e9f8a
+-- hash: 8b3f57d9af573da9886e2f02c6aa3358967c9867c24567c38880ce531fe4f80f
 
 name:           ivy
 version:        0.1.0.0
@@ -42,6 +42,7 @@ library
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , containers
     , data-reify
     , free
     , hedgehog
@@ -60,6 +61,7 @@ test-suite tasty
   main-is: TastyDriver.hs
   other-modules:
       InterfaceSpec
+      SudokuSpec
       Control.Monad.Lat.Class
       Control.Monad.LatMap.Class
       Control.Monad.Prop.Class
@@ -83,6 +85,7 @@ test-suite tasty
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , containers
     , data-reify
     , free
     , hedgehog

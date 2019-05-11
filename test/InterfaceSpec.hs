@@ -38,7 +38,6 @@ evalHutton v = getTerm v >>= \case
     bindLat kb (a + b)
   _ -> pure ()
 
-
 -- * Sadly, without some way to introspect whether a term is forced, we can't
 --   have the nicer interface which allows us to write more or less pure
 --   functions and have their fall-through properties inferred.

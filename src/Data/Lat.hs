@@ -119,7 +119,7 @@ instance (POrd v) => POrd (Lat e v) where
   notEqualTo      = dropNEQ
 
 instance (Semigroup e) => LatticeF (Lat e) where
-  liftLatBottom _ = Bot
+  -- liftLatBottom _ = Bot
 
   liftLatJoin _ (Top e) (Top e') = pure . Top $ e <> e'
   liftLatJoin _ e@(Top _) _ = pure e
@@ -135,6 +135,6 @@ instance (Semigroup e) => LatticeF (Lat e) where
   liftLatMeet f (Val a) (Val b) = Val <$> f a b
 
 instance (Semigroup e, Lattice v) => Lattice (Lat e v) where
-  latBottom = dropBot
+  -- latBottom = dropBot
   latJoin   = dropJoin
   latMeet   = dropMeet

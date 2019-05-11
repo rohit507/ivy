@@ -26,3 +26,23 @@ data RTerm l k where
   V :: k -> RTerm l k
 
 deriving instance (Functor l) => Functor (RTerm l)
+
+-- I want to be able to translate:
+--
+--    Fx (v := (a :+ b) :* c) <- get f
+--    ...
+--
+-- Into
+--
+--   v :=$ a <- get f
+--   e :*$ c <- get a
+--   a :+$ b <- get e
+--   ...
+--
+--  so I want something like
+--
+--    pattern Fx :: a -> m (Key a)
+--
+--  Fx a <- (bind -> Just a)
+--
+--  Fuck it, I don't know, I should come back to this later.
