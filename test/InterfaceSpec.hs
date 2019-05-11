@@ -16,6 +16,7 @@ import Control.Monad.Lat.Class
 import Control.Monad.Prop.Class
 import Control.Monad.TermGraph.Class
 
+
 -- | Hutton's Razor expressed as a datatype.
 data HuttonF f where
   I :: Int -> HuttonF f
@@ -24,8 +25,9 @@ data HuttonF f where
 -- | Okay, this assumes that the lattice for Int is flat. And this only
 --   assumes single level term unrolling. The larger scale unrolling can
 --   be done in some other context (presumably)
-evalHutton :: (MonadTermGraph m, MonadProp m) => Vert m -> Operation m
-evalHutton v = getTerm v >>= \case
+evalHutton :: (MonadTermGraph m, MonadProp m) => Vert m -> m ()
+evalHutton v = undefined
+{- evalHutton v = getTerm v >>= \case
   v := I n -> do
     k <- getKey @Int n
     bindLat k n
@@ -37,6 +39,8 @@ evalHutton v = getTerm v >>= \case
     b <- getLat kb
     bindLat kb (a + b)
   _ -> pure ()
+-}
+
 
 -- * Sadly, without some way to introspect whether a term is forced, we can't
 --   have the nicer interface which allows us to write more or less pure

@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 {-|
 Module      : Data.Lat
 Description : The Lat type
@@ -110,13 +112,15 @@ instance POrdF (Lat e) where
   liftNotEqualTo f (Val a) (Val b) = f a b
   liftNotEqualTo _ _       _       = pure True
 
+instance (POrd v) => Eq (Lat e v) where
+  (==) = dropEQ
+  (/=) = dropNEQ
+
 instance (POrd v) => POrd (Lat e v) where
   lessThanOrEq    = dropLTE
   lessThan        = dropLT
   greaterThanOrEq = dropGTE
   greaterThan     = dropGT
-  equalTo         = dropEQ
-  notEqualTo      = dropNEQ
 
 instance (Semigroup e) => LatticeF (Lat e) where
   -- liftLatBottom _ = Bot
@@ -135,6 +139,8 @@ instance (Semigroup e) => LatticeF (Lat e) where
   liftLatMeet f (Val a) (Val b) = Val <$> f a b
 
 instance (Semigroup e, Lattice v) => Lattice (Lat e v) where
+
+  type LatErr m (Lat e v) = (LatErrF m (Lat e) v, LatErr m v)
   -- latBottom = dropBot
   latJoin   = dropJoin
   latMeet   = dropMeet

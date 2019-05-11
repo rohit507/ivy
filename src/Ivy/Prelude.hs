@@ -10,7 +10,8 @@ Portability : POSIX
 
 module Ivy.Prelude (
     module P
-  , (:=)
+  , (:=)(..)
+  , (::=)(..)
 ) where
 
 import Intro as P

@@ -17,7 +17,7 @@ import Control.Monad.LatMap.Class
 
 class (Monad m) => MonadProp m where
 
-  type Operation m :: *
+  data Operation m :: *
   -- type Operation m = Transaction () (F (Edit m)) m
 
   -- | getKey and getVert define an isomorphism between vertices on the term
@@ -46,7 +46,7 @@ class (Monad m) => MonadProp m where
   --    - Should die on pattern match failures and guard hitting fail. Other
   --      failures (i.e guards reading bottom) should just cause the transaction
   --      to abort and be reinserted as a hook.
-  addRule :: (Vert m -> Operation m) -> m ()
+  addRule :: (Vert m -> m ()) -> m ()
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.

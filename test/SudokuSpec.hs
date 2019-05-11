@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 {-|
 Module      : SudokuSpec
 Description : Solves Sudoku by explicitly tracking ambiguity.
@@ -16,23 +18,33 @@ import Control.Monad.Lat.Class
 import Control.Monad.Prop.Class
 import Control.Monad.TermGraph.Class
 
+import Data.POrd
 import Data.Lattice
 import qualified Data.IntSet as IntSet
 
 -- | Set of potential options for each value in the grid.
 data Options = Opts IntSet
+  deriving (Show, Eq)
+
+instance POrd Options where
+  lessThanOrEq    (Opts a) (Opts b) = b `IntSet.isSubsetOf` a
+  lessThan        (Opts a) (Opts b) = b `IntSet.isProperSubsetOf` a
+  greaterThanOrEq (Opts a) (Opts b) = a `IntSet.isSubsetOf` b
+  greaterThan     (Opts a) (Opts b) = a `IntSet.isProperSubsetOf` b
 
 instance Lattice Options where
 
+  type LatErr m Options = (IsLatErr m String)
+
   latJoin (Opts a) (Opts b) = if
-    | IntSet.null c = top "There are no valid options for this square."
-    | otherwise = val $ Opts c
+    | IntSet.null c -> top "There are no valid options for this square."
+    | otherwise -> val $ Opts c
     where
       c = IntSet.intersection a b
 
   latMeet (Opts a) (Opts b) = if
-    | IntSet.fromList [1..9] == c = bottom
-    | otherwise = val $ Opts c
+    | IntSet.fromList [1..9] == c -> bot
+    | otherwise -> val $ Opts c
     where
       c = IntSet.union a b
 

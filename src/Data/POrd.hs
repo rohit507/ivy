@@ -12,14 +12,12 @@ module Data.POrd where
 
 import Ivy.Prelude
 
-class POrd l where
+class (Eq l) => POrd l where
 
   lessThanOrEq    :: l -> l -> Bool
   lessThan        :: l -> l -> Bool
   greaterThanOrEq :: l -> l -> Bool
   greaterThan     :: l -> l -> Bool
-  equalTo         :: l -> l -> Bool
-  notEqualTo      :: l -> l -> Bool
 
 class (Functor l) => POrdF l where
 
@@ -31,6 +29,12 @@ class (Functor l) => POrdF l where
   liftNotEqualTo      :: (Monad m) => (p -> p -> m Bool) -> l p -> l p -> m Bool
 
 newtype DropF l p = DF { unDF :: l p }
+
+instance (Functor l, POrdF l, Eq p) => Eq (DropF l p) where
+  DF a == DF b
+    = runIdentity $ liftEqualTo (\ x y -> pure $ x == y) a b
+  DF a /= DF b
+   = runIdentity $ liftNotEqualTo (\ x y -> pure $ x /= y) a b
 
 instance (Functor l, POrdF l, POrd p) => POrd (DropF l p) where
 
@@ -44,10 +48,6 @@ instance (Functor l, POrdF l, POrd p) => POrd (DropF l p) where
   greaterThan (DF a) (DF b)
     = runIdentity $ liftGreaterThan     (\ x y -> pure $ greaterThan    x y) a b
 
-  equalTo (DF a) (DF b)
-    = runIdentity $ liftEqualTo (\ x y -> pure $ equalTo x y) a b
-  notEqualTo (DF a) (DF b)
-    = runIdentity $ liftNotEqualTo (\ x y -> pure $ notEqualTo x y) a b
 
 dropLTE :: (Functor l, POrdF l, POrd p) => l p -> l p -> Bool
 dropLTE a b = lessThanOrEq (DF a) (DF b)
@@ -58,6 +58,6 @@ dropGTE a b = greaterThanOrEq (DF a) (DF b)
 dropGT :: (Functor l, POrdF l, POrd p) => l p -> l p -> Bool
 dropGT a b = greaterThan (DF a) (DF b)
 dropEQ :: (Functor l, POrdF l, POrd p) => l p -> l p -> Bool
-dropEQ a b = equalTo (DF a) (DF b)
+dropEQ a b = DF a == DF b
 dropNEQ :: (Functor l, POrdF l, POrd p) => l p -> l p -> Bool
-dropNEQ a b = notEqualTo (DF a) (DF b)
+dropNEQ a b = DF a /= DF b
