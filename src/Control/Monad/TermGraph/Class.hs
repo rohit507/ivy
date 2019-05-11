@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 {-|
 Module      : Control.Monad.TermGraph.Class
 Description : Class for monads which can store a graph where edges are
@@ -21,17 +23,19 @@ import Ivy.Prelude
 --           relationship?
 class (Monad m) => MonadTermGraph m where
 
-  type Term m :: *
+  type Term (t :: * -> *) m :: *
   type Vert m :: *
 
   type TermCons (t :: * -> *) m :: Constraint
 
   -- | Given some relationship between vertices, adds it to the graph, and
   --   returns a reference to said relationship.
-  addTerm :: (TermCons t m) => (t (Vert m)) -> m (Term m)
+  addTerm :: (TermCons t m) => (t (Vert m)) -> m (Term t m)
 
-  -- | Given a particular vertex will retrieve relationships that
+  -- | Retrieves a "Single" term from the term graph. In general this will just
+  --   take your operation on a term graph and
+  getTerm :: forall t. (TermCons t m) => Term t m -> m (t (Vert m))
+
+  -- | Given a particular vertex will retrieve terms (of one type) that
   --   involve said vertex.
-  --
-  --   FIXME :: Consider having the default version pre-filter the Rels somehow?
-  getTerms :: Vert m -> m [Term m]
+  getTerms :: forall t. (TermCons t m) => Vert m -> m [t (Vert m)]

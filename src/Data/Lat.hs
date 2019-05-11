@@ -125,6 +125,8 @@ instance (POrd v) => POrd (Lat e v) where
 instance (Semigroup e) => LatticeF (Lat e) where
   -- liftLatBottom _ = Bot
 
+  type LatErrF m (Lat e) p = ()
+
   liftLatJoin _ (Top e) (Top e') = pure . Top $ e <> e'
   liftLatJoin _ e@(Top _) _ = pure e
   liftLatJoin _ _ e@(Top _) = pure e

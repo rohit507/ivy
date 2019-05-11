@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 {-|
 Module      : Control.Monad.Prop.Class
 Description : Class for monads which can describe a propagation network.
@@ -15,7 +17,7 @@ import Ivy.Prelude
 import Control.Monad.TermGraph.Class
 import Control.Monad.LatMap.Class
 
-class (Monad m) => MonadProp m where
+class (MonadTermGraph m) => MonadProp m where
 
   data Operation m :: *
   -- type Operation m = Transaction () (F (Edit m)) m
@@ -23,18 +25,18 @@ class (Monad m) => MonadProp m where
   -- | getKey and getVert define an isomorphism between vertices on the term
   --   graph and keys. getKey here should only fail when the type of v
   --   requested is incorrect.
-  getKey :: forall v. (MonadTermGraph m, MonadLatMap v m, LatCons m v)
-    => Vert m -> Maybe (Key m v)
+  getKey :: forall v. (MonadLatMap v m, LatCons m v)
+    => Vert m -> m (Key m v)
 
-  getVert :: forall v. (MonadTermGraph m, MonadLatMap v m, LatCons m v)
+  getVert :: forall v. (MonadLatMap v m, LatCons m v)
     => Key m v -> Vert m
 
-  -- | Will run all rules until the
+  -- | Will run all rules until there are no more to run.
   quiesce :: m ()
 
   -- | A rule:
   --
-  --    - Has an initial vertex to which it applies
+  --    - Has an initial vertex (type) to which it applies
   --    - Can read the lat member associated with a vertex
   --    - can see a single relation associated with the vertex (non-determinism
   --      is handled elsewhere)
@@ -46,7 +48,13 @@ class (Monad m) => MonadProp m where
   --    - Should die on pattern match failures and guard hitting fail. Other
   --      failures (i.e guards reading bottom) should just cause the transaction
   --      to abort and be reinserted as a hook.
-  addRule :: (Vert m -> m ()) -> m ()
+  addRule :: (TermCons t m) => (Term t m -> m ()) -> m ()
+
+
+
+
+
+
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
@@ -54,8 +62,8 @@ class (Monad m) => MonadProp m where
 --   When we use this within a free monad we have a
 data Edit m a where
 
-  AddTerm :: (MonadTermGraph m, TermCons r m)
-    => r (Vert m) -> Edit m (Term m)
+  AddTerm :: (MonadTermGraph m, TermCons t m)
+    => t (Vert m) -> Edit m (Term t m)
 
   Put      :: (MonadLatMap v m, LatCons m v)
     => LatMemb m v -> Edit m (Key m v)

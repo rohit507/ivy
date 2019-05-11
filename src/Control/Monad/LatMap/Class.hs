@@ -16,7 +16,7 @@ import Ivy.Prelude
 class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 
   data Key     m v :: *
-  data LatMemb m v :: *
+  type LatMemb m v :: *
   type LatCons m v :: Constraint
 
   putLat   :: (LatCons m v) => LatMemb m v -> m (Key m v)
