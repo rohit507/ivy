@@ -17,7 +17,7 @@ import Data.Functor (fmap)
 
 import Control.Monad.Lat.Class
 import Control.Monad.LatMap.Class
-import Control.Monad.Prop.Class
+-- import Control.Monad.Prop.Class
 import Control.Monad.TermGraph.Class
 import Control.Monad.Free
 

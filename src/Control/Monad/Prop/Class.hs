@@ -16,6 +16,7 @@ module Control.Monad.Prop.Class where
 import Ivy.Prelude
 import Control.Monad.TermGraph.Class
 import Control.Monad.LatMap.Class
+import Data.Transaction
 
 class (MonadTermGraph m) => MonadTermLat m where
 
@@ -49,14 +50,5 @@ class (MonadTermLat m) => MonadProp m where
   --
   --   TODO :: Find better way to do this, maybe consolidate constraint
   --           dicts into a single newtype.
-  addRule :: forall m' t. (RuleCons m m', TermCons t m)
-    => (Term t m -> m' ()) -> m ()
-
-type RuleCons m m' = forall v j a l.
-  (MonadTermGraph m'
-  , MonadTermLat m'
-  , Alternative m'
-  , MonadLatMap v m :=> MonadLatMap v m'
-  , TermCons j m :=> TermCons j m'
-  , (LatMemb m a ~ l) :=> (LatMemb m' a ~ l)
-  )
+  addRule :: forall t. (TermCons t m)
+    => (Term t m -> TransactT s m ()) -> m ()
