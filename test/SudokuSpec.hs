@@ -18,6 +18,7 @@ import Control.Monad.Lat.Class
 import Control.Monad.LatMap.Class
 import Control.Monad.Prop.Class
 import Control.Monad.TermGraph.Class
+import Control.Monad.Free
 
 import Data.POrd
 import Data.Lattice
@@ -175,9 +176,27 @@ holeMap = IntMap.fromList $ zip [1..9] (map makeHole [1..9])
 holeOpt :: Int -> Options
 holeOpt h = holeMap IntMap.! h
 
-data TransactT t f m a where
-  Watch :: HashMap t (t -> m (TransactT t f m a)) -> TransactT t f m a
-  Run   :: m a -> TransactT t f m a
+
+-- | An edit captures a single concrete change we could make to our
+--   lattice map.
+--
+--   When we use this within a free monad we have a
+data Edit m a where
+
+  AddTerm :: (MonadTermGraph m, TermCons t m)
+    => t (Vert m) -> Edit m (Term t m)
+
+  Put      :: (MonadLatMap v m, LatCons m v)
+    => LatMemb m v -> Edit m (Key m v)
+
+  Bind     :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> LatMemb m v -> Edit m (Key m v)
+
+  Equals   :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m (Key m v)
+
+  Subsumes :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m Bool
 
 type KeyT t f m v = Key (TransactT t f m) v
 
