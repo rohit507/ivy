@@ -24,6 +24,8 @@ import Data.Lattice
 import qualified Data.IntSet as IntSet
 import qualified Data.IntMap as IntMap
 
+import GHC.Base (fmap)
+
 -- | Set of potential options for each value in the grid.
 newtype Options = Opts IntSet
   deriving (Show, Eq)
@@ -100,8 +102,27 @@ finalRule t = do
     h:[] -> bindLat kFin (Final h) *> pure ()
     _    -> pure ()
 
--- TODO :: Add rule to ensure that setting the final value updates the
---        options for a square.
+-- | This rule will just ensure that, when we change the final value of a square
+--   the options are correctly updated. This should only come into play when
+--   we manually bind a final value. Otherwise it should just be a standard
+--   byproduct of what we're doing.
+invFinalRule :: forall m. ( MonadTermGraph m
+                      , MonadLatMap Options m
+                      , MonadLatMap Final m
+                      , MonadProp m
+                      , TermCons Square m
+                      , LatCons m Final
+                      , LatCons m Options
+                      , LatMemb m Final  ~ Final
+                      , LatMemb m Options ~ Options)
+          => Term Square m -> m ()
+invFinalRule t = do
+  Square v <- getTerm t
+  kOpt :: Key m Options <- getKey v
+  kFin :: Key m Final  <- getKey v
+  Final s <- getLat kFin
+  bindLat kOpt (Opts . IntSet.singleton $ s)
+  pure ()
 
 -- | Generate a list of single elements and remainders from an input list.
 splits :: [a] -> [(a,[a])]
@@ -154,7 +175,91 @@ holeMap = IntMap.fromList $ zip [1..9] (map makeHole [1..9])
 holeOpt :: Int -> Options
 holeOpt h = holeMap IntMap.! h
 
+data TransactT t f m a where
+  Watch :: HashMap t (t -> m (TransactT t f m a)) -> TransactT t f m a
+  Run   :: m a -> TransactT t f m a
 
+type KeyT t f m v = Key (TransactT t f m) v
+
+instance Functor (TransactT t f m) where
+  fmap = undefined
+
+instance Applicative (TransactT t f m) where
+  pure = undefined
+  a <*> b = undefined
+
+instance Alternative (TransactT t f m) where
+  empty = undefined
+  a <|> b = undefined
+
+instance Monad (TransactT t f m) where
+  a >>= b = undefined
+
+instance (MonadLatMap v m) => MonadLatMap v (TransactT t f m) where
+  data Key     (TransactT t f m) v = TKey (Key m v)
+  type LatMemb (TransactT t f m) v = LatMemb m v
+  type LatCons (TransactT t f m) v = LatCons m v
+
+  putLat   :: (LatCons m v)
+    => LatMemb m v
+    -> TransactT t f m (KeyT t f m v)
+  putLat = undefined
+
+  getLat   :: (LatCons m v)
+    => KeyT t f m v
+    -> TransactT t f m (LatMemb m v)
+  getLat = undefined
+
+  bindLat  :: (LatCons m v)
+    => KeyT t f m v
+    -> LatMemb m v
+    -> TransactT t f m (KeyT t f m v)
+  bindLat = undefined
+
+  equals   :: (LatCons m v)
+    => KeyT t f m v
+    -> KeyT t f m v
+    -> TransactT t f m (KeyT t f m v)
+  equals = undefined
+
+  subsumes :: (LatCons m v)
+    => KeyT t f m v
+    -> KeyT t f m v
+    -> TransactT t f m Bool
+  subsumes = undefined
+
+instance (MonadTermGraph m) => MonadTermGraph (TransactT t f m) where
+
+  type Term t' (TransactT t f m) = Term t' m
+  type Vert (TransactT t f m) = Vert m
+  type TermCons t' (TransactT t f m) = TermCons t' m
+
+  addTerm :: (TermCons t' m)
+    => (t' (Vert (TransactT t f m))) -> TransactT t f m (Term t' m)
+  addTerm = undefined
+
+  getTerm :: (TermCons t' m) => Term t' m -> TransactT t f m (t' (Vert m))
+  getTerm = undefined
+
+  -- | Given a particular vertex will retrieve terms (of one type) that
+  --   involve said vertex. TODO :: Consider removing this, we shouldn't need it
+  -- getTerms :: (TermCons t' m) => Vert m -> TransactT t f m [t' (Vert m)]
+  -- getTerms = undefined
+
+{-
+instance (MonadTermLat m) => MonadTermLat (TransactT t f m) where
+
+  getKey :: (MonadLatMap v m, LatCons m v)
+    => Vert m -> TransactT t f m (KeyT t f m v)
+  getKey = undefined
+
+  getVert :: (MonadLatMap v m, LatCons m v)
+    => KeyT t f m v -> Vert m
+  getVert = undefined
+-}
+
+-- We want to make the above rules apply to a new monad of ours, a transaction
+-- which collects the operations that can edit a termgraph
 
 
 

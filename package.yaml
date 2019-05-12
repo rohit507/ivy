@@ -22,6 +22,7 @@ dependencies:
   - hedgehog
   - free
   - containers
+  - constraints
   - recursion-schemes
   - data-reify
   - logging

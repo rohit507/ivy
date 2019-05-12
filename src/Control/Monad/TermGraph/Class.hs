@@ -37,5 +37,5 @@ class (Monad m) => MonadTermGraph m where
   getTerm :: forall t. (TermCons t m) => Term t m -> m (t (Vert m))
 
   -- | Given a particular vertex will retrieve terms (of one type) that
-  --   involve said vertex.
-  getTerms :: forall t. (TermCons t m) => Vert m -> m [t (Vert m)]
+  --   involve said vertex. TODO :: Consider removing this, we shouldn't need it
+  -- getTerms :: forall t. (TermCons t m) => Vert m -> m [t (Vert m)]

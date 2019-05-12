@@ -17,9 +17,9 @@ import Ivy.Prelude
 import Control.Monad.TermGraph.Class
 import Control.Monad.LatMap.Class
 
-class (MonadTermGraph m) => MonadProp m where
+class (MonadTermGraph m) => MonadTermLat m where
 
-  data Operation m :: *
+  -- data Operation m :: *
   -- type Operation m = Transaction () (F (Edit m)) m
 
   -- | getKey and getVert define an isomorphism between vertices on the term
@@ -30,6 +30,8 @@ class (MonadTermGraph m) => MonadProp m where
 
   getVert :: forall v. (MonadLatMap v m, LatCons m v)
     => Key m v -> Vert m
+
+class (MonadTermLat m) => MonadProp m where
 
   -- | Will run all rules until there are no more to run.
   quiesce :: m ()
