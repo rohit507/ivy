@@ -191,13 +191,17 @@ holeMap = IntMap.fromList $ zip [1..9] (map makeHole [1..9])
 holeOpt :: Int -> Options
 holeOpt h = holeMap IntMap.! h
 
-data TransactT s m a where
-  Watch :: HashMap s (s -> m (TransactT s m a)) -> TransactT s m a
-  -- PureT :: a -> TransactT s m a
-  TopT  :: (MonadError e m) => e -> TransactT s m a
-  BotT  :: TransactT s m a
-  Run   :: F (Edit m) a -> TransactT s m a
-  ManyT :: [TransactT s m a] -> TransactT s m a
+newtype TransactT s m a where
+  TT :: {unTT :: (forall x. Edit m x -> m x) -> Transaction s m a }
+    -> TransactT s m a
+
+data Transaction s m a where
+  WatchT :: HashMap s (s -> m (TransactT s m a)) -> Transaction s m a
+  TopT  :: (MonadError e m) => e -> Transaction s m a
+  BotT  :: Transaction s m a
+  RunT  :: F (Edit m) a -> Transaction s m a
+  LiftT :: m a -> Transaction s m a
+  ManyT :: [TransactT s m a] -> Transaction s m a
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
@@ -220,20 +224,21 @@ data Edit m a where
   Subsumes :: (MonadLatMap v m, LatCons m v)
     => Key m v -> Key m v -> Edit m Bool
 
-type KeyT t m v = Key (TransactT t m) v
+instance (Functor m) => Functor (Transaction s m) where
+  fmap _ (TopT   e) = TopT e
+  fmap _ BotT       = BotT
+  fmap f (ManyT  l) = ManyT $ map f <$> l
+  fmap f (WatchT m) = WatchT $ (map . map . map . map) f m
+  fmap f (RunT   a) = RunT $ map f a
+  fmap f (LiftT  a) = LiftT $ f <$> a
 
 instance (Functor m) => Functor (TransactT s m) where
-  fmap _ (TopT e ) = TopT e
-  fmap _ BotT      = BotT
-  fmap f (ManyT l) = ManyT $ (map f) <$> l
-  fmap f (Watch m) = Watch $ (map . map . map . map) f m
-  fmap f (Run   a) = Run $ map f a
-  -- fmap f (PureT a) = PureT $ f a
+  fmap f (TT fm) = TT (\ s -> f <$> fm s)
 
-instance (Functor m) => Applicative (TransactT s m) where
-  pure = Run . pure
+instance (Functor m) => Applicative (Transaction s m) where
+  pure = RunT . pure
 
-  (<*>) :: TransactT s m (a -> b) -> TransactT s m a -> TransactT s m b
+  (<*>) :: Transaction s m (a -> b) -> Transaction s m a -> Transaction s m b
   -- We want errors to be propagated forward as early as possible so that
   -- we don't keep rules hanging around longer than neccesary.
   (TopT e) <*> _ = TopT e
@@ -243,19 +248,26 @@ instance (Functor m) => Applicative (TransactT s m) where
 
   -- Many indicates non-determinism of a more general sort, where multiple
   -- different constructors of a TransactT are used in parallel
-  (ManyT lf) <*> a = ManyT [f <*> a | f <- lf]
-  f <*> (ManyT la) = ManyT [f <*> a | a <- la]
+  (ManyT lf) <*> a = ManyT [TT (\ s -> unTT f s <*> a) | f <- lf]
+  f <*> (ManyT la) = ManyT [TT (\ s -> f <*> unTT a s) | a <- la]
 
   -- If we've got at least one watch parameter then we need to float it
   -- outwards as we continue building the resulting Edit
-  (Watch mf) <*> a = Watch $ (map . map . map) (<*> a) mf
-  f <*> (Watch ma) = Watch $ (map . map . map) (f <*>) ma
+  (WatchT mf) <*> a = WatchT $ (map . map . map)
+    (\ f -> TT (\ s -> unTT f s <*> a)) mf
+  f <*> (WatchT ma) = WatchT $ (map . map . map)
+    (\ a -> TT (\ s -> f <*> unTT a s)) ma
   -- Otherwise we follow the rules for the free monad.
-  (Run   f ) <*> (Run   a ) = Run $ f <*> a
-  -- (Run   f ) <*> (PureT a ) = Run $ f <*> pure a
-  -- (PureT f ) <*> a  = f <$> a
+  (RunT   f ) <*> (RunT   a ) = RunT $ f <*> a
 
-instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
+  (LiftT a) <*> b = undefined
+
+instance (Functor m) => Applicative (TransactT s m) where
+  pure a = TT (\ _ -> pure a)
+
+  TT sf <*> TT sa = TT (\ s -> sf s <*> sa s)
+
+instance (Applicative m, Eq s, Hashable s) => Alternative (Transaction s m) where
   empty = BotT
 
   BotT <|> b = b
@@ -264,34 +276,45 @@ instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
   (TopT e) <|> _ = TopT e
   _ <|> (TopT e) = TopT e
 
-  Watch ma <|> Watch mb = Watch $ HashMap.unionWith deepAlt ma mb
+  WatchT ma <|> WatchT mb = WatchT $ HashMap.unionWith deepAlt ma mb
     where
       deepAlt :: (s -> m (TransactT s m a))
               -> (s -> m (TransactT s m a))
               -> (s -> m (TransactT s m a))
       deepAlt fa fb = \ s -> (<|>) <$> fa s <*> fb s
 
-  a <|> Watch mb = Watch $ (map . map . map) (a <|>) mb
-  Watch ma <|> b = Watch $ (map . map . map) (<|> b) ma
+  a <|> WatchT mb = WatchT $ (map . map . map)
+    (\ b -> TT (\ s -> a <|> unTT b s)) mb
+  WatchT ma <|> b = WatchT $ (map . map . map)
+    (\ a -> TT (\ s -> unTT a s <|> b)) ma
 
   (ManyT la) <|> (ManyT lb) = ManyT $ la <> lb
-  (ManyT la) <|> b = ManyT $ la <> [b]
-  a <|> (ManyT lb) = ManyT $ a : lb
+  (ManyT la) <|> b = ManyT $ la <> [TT (\ _ -> b)]
+  a <|> (ManyT lb) = ManyT $ TT (\ _ -> a) : lb
 
-  a <|> b = ManyT [a,b]
+  a <|> b = ManyT [TT (\ _ -> a), TT (\ _ -> b)]
 
+instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
+  empty = TT (\ _ -> empty)
 
-instance () => Monad (TransactT s m) where
+  TT sa <|> TT sb = TT (\ s -> sa s <|> sb s)
 
+instance (Functor m) => Monad (Transaction s m) where
  TopT e >>= _ = TopT e
  BotT >>= _ = BotT
- Run a >>= f = _ (f <$> a :: _)
- Watch a >>= _ = undefined
+ WatchT ma >>= f = WatchT $ (map . map . map)
+   (\ (TT sa) -> TT (\ s -> sa s >>= f )) ma
 
+ RunT a >>= f = undefined
+
+instance (Functor m) => Monad (TransactT s m) where
+  TT sa >>= f = TT (\ s -> sa s >>= (\ x -> unTT (f x) s))
+
+{-
 instance (MonadError e m) => MonadError e (TransactT s m) where
   throwError = TopT
 
-
+-}
 
 
 {-
