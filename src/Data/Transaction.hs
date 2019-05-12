@@ -15,98 +15,194 @@ module Data.Transaction where
 import Ivy.Prelude
 import Data.Functor (fmap)
 
--- | A transaction is a way to build an action (in f) bit by bit, when
---   various triggers are hit. In particular we watch for various events to
---   happen, and as they do, build up some operation that can later be run.
+import Control.Monad.Lat.Class
+import Control.Monad.LatMap.Class
+import Control.Monad.Prop.Class
+import Control.Monad.TermGraph.Class
+import Control.Monad.Free
+
+import Data.POrd
+import Data.Lattice
+import qualified Data.IntSet as IntSet
+import qualified Data.IntMap as IntMap
+import qualified Data.HashMap.Lazy as HashMap
+
+newtype a ~> b = Morph { getMorph :: forall x. a x -> b x }
+
+newtype TransactT s m a where
+  TT :: {unTT :: (Edit m ~> Transaction s m) -> Transaction s m a }
+    -> TransactT s m a
+
+data Transaction s m a where
+  WatchT :: HashMap s (s -> m (TransactT s m a)) -> Transaction s m a
+  TopT  :: (MonadError e m) => e -> Transaction s m a
+  BotT  :: Transaction s m a
+  RunT  :: F (Edit m) a -> Transaction s m a
+  LiftT :: m (TransactT s m a) -> Transaction s m a
+  ManyT :: [TransactT s m a] -> Transaction s m a
+
+-- | An edit captures a single concrete change we could make to our
+--   lattice map.
 --
---   Importantly, you can compose transactions in parallel (if m has an
---   alternative instance) and in serial (if f has an applicative instance)
-data Transaction t f m where
+--   When we use this within a free monad we have
+data Edit m a where
 
-  Watch :: HashMap t (t -> m (Transaction t f m)) -> Transaction t f m
+  AddTerm :: (MonadTermGraph m, TermCons t m)
+    => t (Vert m) -> Edit m (Term t m)
 
-  Run :: f () -> Transaction t f m
+  Put      :: (MonadLatMap v m, LatCons m v)
+    => LatMemb m v -> Edit m (Key m v)
 
-instance (Eq t, Hashable t, Alternative m, Applicative f)
-  => Semigroup (Transaction t f m) where
+  Bind     :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> LatMemb m v -> Edit m (Key m v)
 
-  -- NOTE :: We use the Semigroup instance of `Alt` (in Data.Monoid) to allow the
-  -- semigroup instance of HashMap to work over the transactions we return.
-  -- With the appropriate choice of alternative instance (`Compose [] Lat`?)
-  -- we should be able to extract a list of all the new transactions that were
-  -- created.
-  --
-  -- The big problem here is with duplication of rules. If a rule creates
-  -- another rule, should we delete the first?
-  --
-  -- In the case where create different rules based on what a particular
-  -- variable resolves to. Well, it should be an upwards closed function that
-  -- differentiates between cases so if one choice is taken the other shouldn't
-  -- be.
-  --
-  -- I guess the case that's weird is if the created rules aren't a flat lattice,
-  -- instead becoming something else yet. We might need to keep track of child
-  -- rules as we run (each parent rule should have at most one child per object?)
-  --
-  (Watch m) <> (Watch m') = Watch . unAlt $ wrapAlt m <> wrapAlt m'
+  Equals   :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m (Key m v)
+
+  Subsumes :: (MonadLatMap v m, LatCons m v)
+    => Key m v -> Key m v -> Edit m Bool
+
+instance (Functor m) => Functor (Transaction s m) where
+  fmap _ (TopT   e) = TopT e
+  fmap _ BotT       = BotT
+  fmap f (ManyT  l) = ManyT $ map f <$> l
+  fmap f (WatchT m) = WatchT $ (map . map . map . map) f m
+  fmap f (RunT   a) = RunT $ map f a
+  fmap f (LiftT  a) = LiftT $ fmap f <$> a
+
+instance (Functor m) => Functor (TransactT s m) where
+  fmap f (TT fm) = TT (\ s -> f <$> fm s)
+
+instance (Functor m) => Applicative (Transaction s m) where
+  pure = RunT . pure
+
+  (<*>) :: Transaction s m (a -> b) -> Transaction s m a -> Transaction s m b
+  -- We want errors to be propagated forward as early as possible so that
+  -- we don't keep rules hanging around longer than neccesary.
+  (TopT e) <*> _ = TopT e
+  _ <*> (TopT e) = TopT e
+  BotT <*> _ = BotT
+  _ <*> BotT = BotT
+
+  -- Many indicates non-determinism of a more general sort, where multiple
+  -- different constructors of a TransactT are used in parallel
+  (ManyT lf) <*> a = ManyT [TT (\ s -> unTT f s <*> a) | f <- lf]
+  f <*> (ManyT la) = ManyT [TT (\ s -> f <*> unTT a s) | a <- la]
+
+  -- If we've got at least one watch parameter then we need to float it
+  -- outwards as we continue building the resulting Edit
+  (WatchT mf) <*> a = WatchT $ (map . map . map)
+    (\ f -> TT (\ s -> unTT f s <*> a)) mf
+  f <*> (WatchT ma) = WatchT $ (map . map . map)
+    (\ a -> TT (\ s -> f <*> unTT a s)) ma
+  -- Otherwise we follow the rules for the free monad.
+  (RunT   f ) <*> (RunT   a ) = RunT $ f <*> a
+
+  -- And well, we're just waiting
+  (LiftT a) <*> b = LiftT $ (\ (TT sa) -> TT (\ s -> sa s <*> b)) <$> a
+  a <*> (LiftT b) = LiftT $ (\ (TT sb) -> TT (\ s -> a <*> sb s)) <$> b
+
+instance (Functor m) => Applicative (TransactT s m) where
+  pure a = TT (\ _ -> pure a)
+
+  TT sf <*> TT sa = TT (\ s -> sf s <*> sa s)
+
+instance (Applicative m, Eq s, Hashable s) => Alternative (Transaction s m) where
+  empty = BotT
+
+  BotT <|> b = b
+  b <|> BotT = b
+
+  (TopT e) <|> _ = TopT e
+  _ <|> (TopT e) = TopT e
+
+  WatchT ma <|> WatchT mb = WatchT $ HashMap.unionWith deepAlt ma mb
     where
-      wrapAlt :: HashMap k (k -> m r) -> HashMap k (k -> Alt m r)
-      wrapAlt = map (map Alt)
+      deepAlt :: (s -> m (TransactT s m a))
+              -> (s -> m (TransactT s m a))
+              -> (s -> m (TransactT s m a))
+      deepAlt fa fb = \ s -> (<|>) <$> fa s <*> fb s
 
-      unAlt :: HashMap k (k -> Alt m r) -> HashMap k (k -> m r)
-      unAlt = map (map getAlt)
+  a <|> WatchT mb = WatchT $ (map . map . map)
+    (\ b -> TT (\ s -> a <|> unTT b s)) mb
+  WatchT ma <|> b = WatchT $ (map . map . map)
+    (\ a -> TT (\ s -> unTT a s <|> b)) ma
 
-  -- When we have just have two free monads of edits we can concat them to get
-  -- the resulting output.
-  (Run f) <> (Run f') = Run $ f *> f'
+  (ManyT la) <|> (ManyT lb) = ManyT $ la <> lb
+  (ManyT la) <|> b = ManyT $ la <> [TT (\ _ -> b)]
+  a <|> (ManyT lb) = ManyT $ TT (\ _ -> a) : lb
 
-  -- If we have a run and a watch, we watch on the relevant variables and
-  -- append the potential side-effects together. Done this way, if we
-  -- can create a sandbox for the edit operation, we can run an operation
-  -- inside the sandbox and only commit them if certain conditions are met.
-  -- (Hmm, flattened sandboxes == provenance == predicated operations. Just
-  --  add an interpretation function that will turn a forall into a rule.)
-  -- Making decisions with provenance seems like a bad idea.
-  Run e   <> Watch m = Watch . map (\ fk k -> (Run e <>) <$> fk k) $ m
-  Watch m <> Run e   = Watch . map (\ fk k -> (<> Run e) <$> fk k) $ m
+  LiftT a <|> b = LiftT $ (\ (TT sa) -> TT (\ s -> sa s <|> b)) <$> a
+  a <|> LiftT b = LiftT $ (\ (TT sb) -> TT (\ s -> a <|> sb s)) <$> b
 
-
-instance (Eq t, Hashable t, Alternative m, Applicative f)
-  => Monoid (Transaction t f m) where
-
-  mempty = Run $ pure ()
+  a <|> b = ManyT [TT (\ _ -> a), TT (\ _ -> b)]
 
 
--- TODO :: I'm not confident this is the right monad instance for
---         transactions. The goal is to, get to stopping points
---         that are predicated on the return of some trigger.
---
---         Instead of this, we probably want a definition of bind which
---         packs the "next" operation into the bound watch term somehow.
-newtype TransactT t f m a
-  = TransactT { getTransact :: m (Transaction t f m, a) }
+instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
+  empty = TT (\ _ -> empty)
 
-runTransactT :: (Eq t, Hashable t, Applicative f, Alternative m, Monad m)
-             => TransactT t f m () -> m (Transaction t f m)
-runTransactT = map fst . getTransact
+  TT sa <|> TT sb = TT (\ s -> sa s <|> sb s)
 
-instance Functor m => Functor (TransactT t f m) where
-  fmap f (TransactT m) = TransactT $ (\ (a,b) -> (a, f b)) <$> m
+instance (Monad m) => Monad (Transaction s m) where
+ TopT e >>= _ = TopT e
+ BotT >>= _ = BotT
+ WatchT ma >>= f = WatchT $ (map . map . map)
+   (\ (TT sa) -> TT (\ s -> sa s >>= f )) ma
 
-instance (Eq t, Hashable t, Applicative f, Alternative m, Monad m)
-  => Applicative (TransactT t f m) where
+ LiftT a >>= f = LiftT $ (\ ta -> TT (\ s -> unTT ta s >>= f)) <$> a
 
-  pure a = TransactT $ pure (mempty, a)
+ RunT a >>= f = LiftT . pure . TT $ (\ s -> foldF (getMorph s) a >>= f)
 
-  TransactT mf <*> TransactT ma = TransactT $ do
-    (t , f) <- mf
-    (t', a) <- ma
-    pure (t <> t', f a)
+instance (Monad m) => Monad (TransactT s m) where
+  TT sa >>= f = TT (\ s -> sa s >>= (\ x -> unTT (f x) s))
 
-instance (Eq t, Hashable t, Applicative f, Alternative m, Monad m)
-  => Monad (TransactT t f m) where
+instance (MonadError e m) => MonadError e (TransactT s m)
+instance (MonadError e m) => MonadError e (Transaction s m)
 
-  TransactT ma >>= f = TransactT $ do
-    (t,  a) <- ma
-    (t', b) <- getTransact . f $ a
-    pure (t <> t', b)
+type KeyT s m = Key (Transaction s m)
+
+instance (MonadLatMap v m) => MonadLatMap v (Transaction s m) where
+  data Key     (Transaction s m) v = TKey (Key m v)
+  type LatMemb (Transaction s m) v = LatMemb m v
+  type LatCons (Transaction s m) v = LatCons m v
+
+  putLat   :: (LatCons m v)
+    => LatMemb m v
+    -> Transaction s m (KeyT s m v)
+  putLat = undefined
+
+  getLat   :: (LatCons m v)
+    => KeyT s m v
+    -> Transaction s m (LatMemb m v)
+  getLat = undefined
+
+  bindLat  :: (LatCons m v)
+    => KeyT s m v
+    -> LatMemb m v
+    -> Transaction s m (KeyT s m v)
+  bindLat = undefined
+
+  equals   :: (LatCons m v)
+    => KeyT s m v
+    -> KeyT s m v
+    -> Transaction s m (KeyT s m v)
+  equals = undefined
+
+  subsumes :: (LatCons m v)
+    => KeyT s m v
+    -> KeyT s m v
+    -> Transaction s m Bool
+  subsumes = undefined
+
+instance (MonadTermGraph m) => MonadTermGraph (Transaction s m) where
+
+  type Term t' (Transaction s m) = Term t' m
+  type Vert (Transaction s m) = Vert m
+  type TermCons t' (Transaction s m) = TermCons t' m
+
+  addTerm :: (TermCons t' m)
+    => (t' (Vert (Transacttion s m))) -> Transaction s m (Term t' m)
+  addTerm = undefined
+
+  getTerm :: (TermCons t' m) => Term t' m -> Transaction s m (t' (Vert m))
+  getTerm = undefined

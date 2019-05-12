@@ -36,18 +36,26 @@ class (MonadTermLat m) => MonadProp m where
   -- | Will run all rules until there are no more to run.
   quiesce :: m ()
 
-  -- | A rule:
+  -- | The first three parameters carry proofs that you can use certain
+  --   features of m' in m.
+  --   The fourth is a morphism from m to m' letting you basically lift
+  --   actions from one into the other.
   --
-  --    - Has an initial vertex (type) to which it applies
-  --    - Can read the lat member associated with a vertex
-  --    - can see a single relation associated with the vertex (non-determinism
-  --      is handled elsewhere)
-  --    - Can add relations to the graph.
-  --    - Can define whether lattice members are equal or subsume each other.
-  --    - Should only every be upwards closed (i.e it can only increase the
-  --      number of vertices or relations in the graph, and only push
-  --      lattice values upwards.
-  --    - Should die on pattern match failures and guard hitting fail. Other
-  --      failures (i.e guards reading bottom) should just cause the transaction
-  --      to abort and be reinserted as a hook.
-  addRule :: (TermCons t m) => (Term t m -> m ()) -> m ()
+  --   Yeah this model is a bit kludgy but it should do for now.
+  --   Alternately we could just have this work on m, but then we wouldn't be
+  --   able to insert our, oh so important, transaction management layer.
+  --
+  --   Whatever, it'll do for now.
+  --
+  --   TODO :: Find better way to do this, maybe consolidate constraint
+  --           dicts into a single newtype.
+  addRule :: forall m' t. (RuleCons m', TermCons t m, )
+    => (forall v. MonadLatMap v m :- MonadLatMap v m')
+    -> (forall j. TermCons j m :- TermCons j m')
+    -> (forall a l. (LatMemb m a ~ l) :- (LatMemb m' a ~ l))
+    -> (Term t m -> m' ()) -> m ()
+
+type RuleCons m m' = forall v j a l.
+  (MonadTermGraph m'
+  , MonadTermLat m'
+                     , Alternative m')
