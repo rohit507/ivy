@@ -30,7 +30,7 @@ import qualified Data.HashMap.Lazy as HashMap
 newtype a ~> b = Morph { getMorph :: forall x. a x -> b x }
 
 newtype TransactT s m a where
-  TT :: {unTT :: (Edit m ~> Transaction s m) -> Transaction s m a }
+  TT :: {unTT :: (Edit m ~> m) -> Transaction s m a }
     -> TransactT s m a
 
 data Transaction s m a where
@@ -151,7 +151,7 @@ instance (Monad m) => Monad (Transaction s m) where
 
  LiftT a >>= f = LiftT $ (\ ta -> TT (\ s -> unTT ta s >>= f)) <$> a
 
- RunT a >>= f = LiftT . pure . TT $ (\ s -> foldF (getMorph s) a >>= f)
+ RunT a >>= f = LiftT . return $ TT (\ s -> foldF (getMorph s) >>= pure)
 
 instance (Monad m) => Monad (TransactT s m) where
   TT sa >>= f = TT (\ s -> sa s >>= (\ x -> unTT (f x) s))
