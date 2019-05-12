@@ -16,7 +16,7 @@ module Ivy.Prelude (
 
 import Intro as P
 import Data.Dynamic as P
-import Data.Constraint as P
+import Data.Constraint as P hiding (top)
 import Data.Bifoldable as P
 import Data.Bitraversable as P
 import Data.Functor.Foldable as P hiding (fold)

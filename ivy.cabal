@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 8b3f57d9af573da9886e2f02c6aa3358967c9867c24567c38880ce531fe4f80f
+-- hash: e443fd83bce7cb002f2b5fb9dc052ecc8f7886080cb4eaeef10cb526b3709720
 
 name:           ivy
 version:        0.1.0.0
@@ -42,6 +42,7 @@ library
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , constraints
     , containers
     , data-reify
     , free
@@ -54,6 +55,7 @@ library
     , tasty-hedgehog
     , tasty-hunit
     , text
+    , unordered-containers
   default-language: Haskell2010
 
 test-suite tasty
@@ -85,6 +87,7 @@ test-suite tasty
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Werror -Wsemigroup -Wwarn=redundant-constraints -Wwarn=unused-matches -Wwarn=deprecations -Wwarn=unused-local-binds -Wwarn=unused-imports -ddump-cs-trace -ddump-splices -ddump-to-file -fprint-typechecker-elaboration
   build-depends:
       base >=4.7 && <5
+    , constraints
     , containers
     , data-reify
     , free
@@ -97,4 +100,5 @@ test-suite tasty
     , tasty-hedgehog
     , tasty-hunit
     , text
+    , unordered-containers
   default-language: Haskell2010

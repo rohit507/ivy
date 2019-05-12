@@ -54,14 +54,14 @@ data TGraph g h = TGraph { netlist :: [(Unique, h Unique)]
                      , start :: g Unique}
 
 showTGraph :: (Show (g Int), Show (h Int)) => TGraph g h -> Text
-showTGraph (TGraph netlist start) = Text.unlines $ lets <> [ins]
+showTGraph (TGraph netlist start) = Text.unlines $ lets <> [inStmt]
   where
     lets = zipWith (<>)
       ("let ": repeat "    ")
       [show u <> " = " <> show e | (u,e) <- sortOn fst netlist]
 
-    ins :: Text
-    ins = "  in " <> show start
+    inStmt :: Text
+    inStmt = "  in " <> show start
 
 instance (Functor g, Functor h) => Functor (ComposeDeRef g h) where
   fmap f (CDR (Left g)) = CDR . Left $ fmap f g

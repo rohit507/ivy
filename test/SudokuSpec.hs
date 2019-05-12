@@ -24,6 +24,7 @@ import Data.POrd
 import Data.Lattice
 import qualified Data.IntSet as IntSet
 import qualified Data.IntMap as IntMap
+import qualified Data.HashMap.Lazy as HashMap
 
 import GHC.Base (fmap)
 
@@ -164,6 +165,20 @@ groupRule t = do
         kOpt :: Key m Options <- getKey n
         bindLat kOpt (holeOpt v)
 
+-- | We need to split operations here into a pre-set (for running live)
+--   and a post-set (changes to run later)
+--
+--   Pre - getKey  - Wait on Vert? nah, get the key live and move on.
+--         getVert - Wait on Vert
+--         getTerm - Wait on Term
+--         getLat  - Wait on Key
+--
+--   Post - addTerm
+--        - bindLat
+--        - equals
+--        - subsumes
+--        - addRule?
+
 -- | This rigamarole lets us cache the options that are missing one
 --   element instead of rebuilding them repeatedly. Admittedly, this
 --   shouldn't be entirely neccesary for such a small problem.
@@ -176,11 +191,18 @@ holeMap = IntMap.fromList $ zip [1..9] (map makeHole [1..9])
 holeOpt :: Int -> Options
 holeOpt h = holeMap IntMap.! h
 
+data TransactT s m a where
+  Watch :: HashMap s (s -> m (TransactT s m a)) -> TransactT s m a
+  -- PureT :: a -> TransactT s m a
+  TopT  :: (MonadError e m) => e -> TransactT s m a
+  BotT  :: TransactT s m a
+  Run   :: F (Edit m) a -> TransactT s m a
+  ManyT :: [TransactT s m a] -> TransactT s m a
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
 --
---   When we use this within a free monad we have a
+--   When we use this within a free monad we have
 data Edit m a where
 
   AddTerm :: (MonadTermGraph m, TermCons t m)
@@ -198,19 +220,81 @@ data Edit m a where
   Subsumes :: (MonadLatMap v m, LatCons m v)
     => Key m v -> Key m v -> Edit m Bool
 
-type KeyT t f m v = Key (TransactT t f m) v
+type KeyT t m v = Key (TransactT t m) v
 
-instance Functor (TransactT t f m) where
-  fmap = undefined
+instance (Functor m) => Functor (TransactT s m) where
+  fmap _ (TopT e ) = TopT e
+  fmap _ BotT      = BotT
+  fmap f (ManyT l) = ManyT $ (map f) <$> l
+  fmap f (Watch m) = Watch $ (map . map . map . map) f m
+  fmap f (Run   a) = Run $ map f a
+  -- fmap f (PureT a) = PureT $ f a
 
-instance Applicative (TransactT t f m) where
-  pure = undefined
-  a <*> b = undefined
+instance (Functor m) => Applicative (TransactT s m) where
+  pure = Run . pure
 
-instance Alternative (TransactT t f m) where
-  empty = undefined
-  a <|> b = undefined
+  (<*>) :: TransactT s m (a -> b) -> TransactT s m a -> TransactT s m b
+  -- We want errors to be propagated forward as early as possible so that
+  -- we don't keep rules hanging around longer than neccesary.
+  (TopT e) <*> _ = TopT e
+  _ <*> (TopT e) = TopT e
+  BotT <*> _ = BotT
+  _ <*> BotT = BotT
 
+  -- Many indicates non-determinism of a more general sort, where multiple
+  -- different constructors of a TransactT are used in parallel
+  (ManyT lf) <*> a = ManyT [f <*> a | f <- lf]
+  f <*> (ManyT la) = ManyT [f <*> a | a <- la]
+
+  -- If we've got at least one watch parameter then we need to float it
+  -- outwards as we continue building the resulting Edit
+  (Watch mf) <*> a = Watch $ (map . map . map) (<*> a) mf
+  f <*> (Watch ma) = Watch $ (map . map . map) (f <*>) ma
+  -- Otherwise we follow the rules for the free monad.
+  (Run   f ) <*> (Run   a ) = Run $ f <*> a
+  -- (Run   f ) <*> (PureT a ) = Run $ f <*> pure a
+  -- (PureT f ) <*> a  = f <$> a
+
+instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
+  empty = BotT
+
+  BotT <|> b = b
+  b <|> BotT = b
+
+  (TopT e) <|> _ = TopT e
+  _ <|> (TopT e) = TopT e
+
+  Watch ma <|> Watch mb = Watch $ HashMap.unionWith deepAlt ma mb
+    where
+      deepAlt :: (s -> m (TransactT s m a))
+              -> (s -> m (TransactT s m a))
+              -> (s -> m (TransactT s m a))
+      deepAlt fa fb = \ s -> (<|>) <$> fa s <*> fb s
+
+  a <|> Watch mb = Watch $ (map . map . map) (a <|>) mb
+  Watch ma <|> b = Watch $ (map . map . map) (<|> b) ma
+
+  (ManyT la) <|> (ManyT lb) = ManyT $ la <> lb
+  (ManyT la) <|> b = ManyT $ la <> [b]
+  a <|> (ManyT lb) = ManyT $ a : lb
+
+  a <|> b = ManyT [a,b]
+
+
+instance () => Monad (TransactT s m) where
+
+ TopT e >>= _ = TopT e
+ BotT >>= _ = BotT
+ Run a >>= f = _ (f <$> a :: _)
+ Watch a >>= _ = undefined
+
+instance (MonadError e m) => MonadError e (TransactT s m) where
+  throwError = TopT
+
+
+
+
+{-
 instance Monad (TransactT t f m) where
   a >>= b = undefined
 
@@ -264,6 +348,8 @@ instance (MonadTermGraph m) => MonadTermGraph (TransactT t f m) where
   --   involve said vertex. TODO :: Consider removing this, we shouldn't need it
   -- getTerms :: (TermCons t' m) => Vert m -> TransactT t f m [t' (Vert m)]
   -- getTerms = undefined
+
+-}
 
 {-
 instance (MonadTermLat m) => MonadTermLat (TransactT t f m) where
