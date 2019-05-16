@@ -31,6 +31,8 @@ import Control.Monad.PropRule.Class
 import Control.Monad.TermGraph.Class
 import Control.Monad.Free
 
+import Data.Coerce
+
 import Data.POrd
 import Data.Lattice
 import Data.Typeable
@@ -240,12 +242,19 @@ instance (MonadLatMap v m)
     -> Transaction m (KeyT m v)
   putLat l = map TrKey . RunT . liftF $ PutE l
 
-  -- | Other actions (like getLat) tell us the rest of the monad is to
-  --   be used
-  getLat   :: (MonadLatMap v m, LatCons m v)
+  -- | Other actions (like getLat) tell us to wait on some term and when
+  --   it changes run the action in the underlying monad
+  getLat :: (MonadLatMap v m, LatCons m v)
     => KeyT m v
     -> Transaction m (LatMemb m v)
-  getLat = undefined
+  getLat (TrKey (k :: Key m v')) =
+    case eqT :: Maybe (v :~: v') of
+      Nothing -> undefined
+      Just Refl -> WatchT $ HashMap.singleton (TKey k) $ \case
+        TKey (k :: Key m v'') -> case eqT :: Maybe (v :~: v'') of
+          Just Refl -> undefined
+          Nothing -> undefined
+        t -> lift $ throwExpectedKeyTrigger t
 
   bindLat  :: (LatCons m v)
     => KeyT m v
@@ -267,17 +276,16 @@ instance (MonadLatMap v m)
 
 instance (MonadTermGraph m) => MonadTermGraph (Transaction m) where
 
-  type Term t (Transaction m) = Term t m
-  type Vert (Transaction m) = Vert m
+  type Term     t (Transaction m) = Term t m
+  type Vert       (Transaction m) = Vert m
   type TermCons t (Transaction m) = TermCons t m
 
-  addTerm :: (TermCons t m)
-    => t (Vert (Transaction m)) -> Transaction m (Term t m)
+  addTerm :: (TermCons t m) => t (Vert m) -> Transaction m (Term t m)
   addTerm = RunT . liftF . AddE
 
   getTerm :: (TermCons t m) => Term t m -> Transaction m (t (Vert m))
   getTerm = lift . getTerm
 
 instance (MonadPropRule m) => MonadPropRule (Transaction m) where
-  getKey = undefined
-  getVert = undefined
+  getKey  = undefined
+  getVert (TrKey k) = getVert k
