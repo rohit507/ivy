@@ -17,6 +17,7 @@ import Ivy.Prelude
 import Control.Monad.Lat.Class
 import Control.Monad.LatMap.Class
 import Control.Monad.Prop.Class
+import Control.Monad.PropRule.Class
 import Control.Monad.TermGraph.Class
 import Control.Monad.Free
 
@@ -88,7 +89,8 @@ newtype Square a = Square a
 finalRule :: forall m. ( MonadTermGraph m
                       , MonadLatMap Options m
                       , MonadLatMap Final m
-                      , MonadProp m
+                      , MonadPropRule Options m
+                      , MonadPropRule Final m
                       , TermCons Square m
                       , LatCons m Final
                       , LatCons m Options
@@ -98,7 +100,7 @@ finalRule :: forall m. ( MonadTermGraph m
 finalRule t = do
   Square v <- getTerm t
   kOpt :: Key m Options <- getKey v
-  kFin :: Key m Final  <- getKey v
+  kFin :: Key m Final   <- getKey v
   Opts s <- getLat kOpt
   case IntSet.elems s of
     h:[] -> bindLat kFin (Final h) *> pure ()
@@ -111,7 +113,8 @@ finalRule t = do
 invFinalRule :: forall m. ( MonadTermGraph m
                       , MonadLatMap Options m
                       , MonadLatMap Final m
-                      , MonadProp m
+                      , MonadPropRule Final m
+                      , MonadPropRule Options m
                       , TermCons Square m
                       , LatCons m Final
                       , LatCons m Options
@@ -142,9 +145,11 @@ splits (a:as) = (a,as) : map (\ (x,xs) -> (x,a:xs)) (splits as)
 --   If we don't, then the system will require every element of the group
 --   to have a final value before propagating anything.
 groupRule :: forall m. ( MonadTermGraph m
-                      , MonadProp m
+                      , MonadPropRule Options m
+                      , MonadPropRule Final m
                       , Alternative m
                       , MonadLatMap Options m
+                      , MonadLatMap Final m
                       , TermCons Group m
                       , LatCons m Options
                       , LatMemb m Options ~ Options

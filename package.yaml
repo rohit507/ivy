@@ -110,14 +110,10 @@ ghc-options:
   - -Wwarn=deprecations
   - -Wwarn=unused-local-binds # TODO :: Re-enable when you feel like cleaning
   - -Wwarn=unused-imports # TODO :: Re-enable when you feel like cleaning
-  # - -fno-warn-orphans
-  # - -fno-warn-type-defaults
-  # - -fno-warn-name-shadowing
-  # - -fno-warn-unticked-promoted-constructors
-                             #         up your imports.
+  - -Wwarn=redundant-constraints # TODO :: Re-enable for cleaning
   # - -fprint-potential-instances
-  - -ddump-cs-trace
-  - -ddump-splices
-  - -ddump-to-file
+  # - -ddump-cs-trace
+  # - -ddump-splices
+  # - -ddump-to-file
   - -fprint-typechecker-elaboration
   #- -prof

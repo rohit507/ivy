@@ -13,7 +13,7 @@ module Control.Monad.LatMap.Class where
 
 import Ivy.Prelude
 
-class (Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
+class (Eq (Key m v), Hashable (Key m v), Monad m) => MonadLatMap (v :: k) (m :: * -> *) where
 
   data Key     m v :: *
   type LatMemb m v :: *

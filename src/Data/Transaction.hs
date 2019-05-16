@@ -1,4 +1,4 @@
--- {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- {-# LANGUAGE AllowAmbiguousTypes #-}
 
 {-|
@@ -32,10 +32,10 @@ import Control.Monad.TermGraph.Class
 import Control.Monad.Free
 
 import Data.Coerce
+import Type.Reflection
 
 import Data.POrd
 import Data.Lattice
-import Data.Typeable
 import qualified Data.IntMap as IntMap
 import qualified Data.HashMap.Lazy as HashMap
 
@@ -48,19 +48,15 @@ import qualified Data.HashMap.Lazy as HashMap
 newtype a ~> b = Morph { getMorph :: forall x. a x -> b x }
 
 data Trigger m where
-   TKey :: ( MonadLatMap v m
-          , LatCons v m
-          , Eq (Key m v)
-          , Hashable (Key m v)
-          , Typeable v)
-     => Key m v -> Trigger m
+   TKey :: (Eq (Key m v), Hashable (Key m v))
+     => TypeRep v -> Key m v -> Trigger m
    TVert :: (Eq (Vert m), Hashable (Vert m))
      => Vert m -> Trigger m
 
 class (Typeable e) => TransactionErr e where
   expectedKeyTrigger  :: (Typeable m) => Trigger m -> e
   expectedVertTrigger :: (Typeable m) => Trigger m -> e
-  invalidKeyType :: e
+  invalidKeyType :: TypeRep expected -> TypeRep actual -> e
 
 throwExpectedKeyTrigger :: (TransactionErr e, MonadError e m, Typeable m)
                         => Trigger m -> m a
@@ -70,22 +66,23 @@ throwExpectedVertTrigger :: (TransactionErr e, MonadError e m, Typeable m)
                         => Trigger m -> m a
 throwExpectedVertTrigger = throwError . expectedVertTrigger
 
-throwInvalidKeyType :: (TransactionErr e, MonadError e m, Typeable m) => m a
-throwInvalidKeyType = throwError invalidKeyType
+throwInvalidKeyType :: (TransactionErr e, MonadError e m, Typeable m)
+  => TypeRep exp -> TypeRep act -> m a
+throwInvalidKeyType a b = throwError $ invalidKeyType a b
 
 instance Eq (Trigger m) where
 
-  TKey (a :: Key m a) == TKey (b :: Key m b)
-    = case (eqT :: Maybe (a :~: b)) of
-        Nothing   -> False
-        Just Refl -> a == b
+  TKey ta (a :: Key m a) == TKey tb (b :: Key m b)
+    = case eqTypeRep ta tb of
+        Nothing -> False
+        Just HRefl -> a == b
 
   TVert a == TVert b = a == b
   _ == _ = False
 
 instance Hashable (Trigger m) where
   hashWithSalt s (TVert v) = hashWithSalt s v
-  hashWithSalt s (TKey k) = hashWithSalt s k
+  hashWithSalt s (TKey tk k) = s `hashWithSalt` tk `hashWithSalt` k
 
 newtype TransactT m a where
   TT :: {unTT :: (Edit m ~> m) -> Transaction m a }
@@ -229,8 +226,16 @@ instance (Monad m) => Monad (TransactT m) where
 
 type KeyT m = Key (Transaction m)
 
-instance (MonadLatMap v m)
+deriving instance (Eq (Key m v)) => Eq (Key (Transaction m) v)
+deriving instance (Hashable (Key m v)) => Hashable (Key (Transaction m) v)
+
+instance ( MonadError e m
+         , TransactionErr e
+         , Typeable v
+         , Typeable m
+         , MonadLatMap v m)
   => MonadLatMap v (Transaction m) where
+
   newtype Key  (Transaction m) v = TrKey { unTrKey :: Key m v }
   type LatMemb (Transaction m) v = LatMemb m v
   type LatCons (Transaction m) v = LatCons m v
@@ -243,18 +248,20 @@ instance (MonadLatMap v m)
   putLat l = map TrKey . RunT . liftF $ PutE l
 
   -- | Other actions (like getLat) tell us to wait on some term and when
-  --   it changes run the action in the underlying monad
+  --   it changes run the action in the underlying monad.
   getLat :: (MonadLatMap v m, LatCons m v)
     => KeyT m v
     -> Transaction m (LatMemb m v)
-  getLat (TrKey (k :: Key m v')) =
-    case eqT :: Maybe (v :~: v') of
-      Nothing -> undefined
-      Just Refl -> WatchT $ HashMap.singleton (TKey k) $ \case
-        TKey (k :: Key m v'') -> case eqT :: Maybe (v :~: v'') of
-          Just Refl -> undefined
-          Nothing -> undefined
-        t -> lift $ throwExpectedKeyTrigger t
+  getLat (TrKey k) = WatchT . HashMap.singleton (TKey ktr k) $ \case
+    TKey tr k' -> case eqTypeRep ktr tr of
+      Nothing -> throwInvalidKeyType ktr tr
+      Just HRefl -> pure <$> getLat k'
+    t -> throwExpectedKeyTrigger t
+
+    where
+
+      ktr :: TypeRep v
+      ktr = typeRep
 
   bindLat  :: (LatCons m v)
     => KeyT m v
@@ -286,6 +293,11 @@ instance (MonadTermGraph m) => MonadTermGraph (Transaction m) where
   getTerm :: (TermCons t m) => Term t m -> Transaction m (t (Vert m))
   getTerm = lift . getTerm
 
-instance (MonadPropRule m) => MonadPropRule (Transaction m) where
-  getKey  = undefined
+instance ( MonadError e m
+         , TransactionErr e
+         , MonadPropRule v m
+         , Typeable v
+         , Typeable m) => MonadPropRule v (Transaction m) where
+
   getVert (TrKey k) = getVert k
+  getKey v = lift $ TrKey <$> getKey @v @m v

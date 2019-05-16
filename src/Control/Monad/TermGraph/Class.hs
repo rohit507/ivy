@@ -21,7 +21,7 @@ import Ivy.Prelude
 --
 --   FIXME :: Do we need to have some operation to get the details of a
 --           relationship?
-class (Monad m) => MonadTermGraph m where
+class (Eq (Vert m), Hashable (Vert m), Monad m) => MonadTermGraph m where
 
   type Term (t :: * -> *) m :: *
   type Vert m :: *

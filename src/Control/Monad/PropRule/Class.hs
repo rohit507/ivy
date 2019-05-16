@@ -15,7 +15,10 @@ import Ivy.Prelude
 import Control.Monad.TermGraph.Class
 import Control.Monad.LatMap.Class
 
-class (MonadTermGraph m) => MonadPropRule m where
+-- | So okay, we've got, for each vertex an associated lattice term
+--   for each particular lattice we are propagating information over.
+--   in an ideal case
+class (MonadTermGraph m, MonadLatMap v m) => MonadPropRule (v :: k) m where
 
   -- data Operation m :: *
   -- type Operation m = Transaction () (F (Edit m)) m
@@ -23,8 +26,6 @@ class (MonadTermGraph m) => MonadPropRule m where
   -- | getKey and getVert define an isomorphism between vertices on the term
   --   graph and keys. getKey here should only fail when the type of v
   --   requested is incorrect.
-  getKey :: forall v. (MonadLatMap v m, LatCons m v)
-    => Vert m -> m (Key m v)
+  getKey :: (LatCons m v) => Vert m -> m (Key m v)
 
-  getVert :: forall v. (MonadLatMap v m, LatCons m v)
-    => Key m v -> Vert m
+  getVert :: (LatCons m v) => Key m v -> Vert m

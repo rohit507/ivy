@@ -15,6 +15,7 @@ module Ivy.Prelude (
 ) where
 
 import Intro as P
+import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)
 import Data.Bifoldable as P
