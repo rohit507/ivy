@@ -42,8 +42,8 @@ import qualified Data.HashMap.Lazy as HashMap
 -- We disable these warnings since actually applying them strips
 -- types of the higher order polymorphism that GHC needs to typechecks
 {-# ANN module ("HLint: ignore Use const" :: String) #-}
-{-# ANN module ("HLint: ignore Use >=>" :: String) #-}
-{-# ANN module ("HLint: ignore Use fmap" :: String) #-}
+{-# ANN module ("HLint: ignore Use >=>"   :: String) #-}
+{-# ANN module ("HLint: ignore Use fmap"  :: String) #-}
 
 newtype a ~> b = Morph { getMorph :: forall x. a x -> b x }
 
@@ -287,6 +287,8 @@ instance (MonadTermGraph m) => MonadTermGraph (Transaction m) where
   type Vert       (Transaction m) = Vert m
   type TermCons t (Transaction m) = TermCons t m
 
+  newVert = lift newVert
+
   addTerm :: (TermCons t m) => t (Vert m) -> Transaction m (Term t m)
   addTerm = RunT . liftF . AddE
 
@@ -300,4 +302,5 @@ instance ( MonadError e m
          , Typeable m) => MonadPropRule v (Transaction m) where
 
   getVert (TrKey k) = getVert k
-  getKey v = lift $ TrKey <$> getKey @v @m v
+
+  getKey v = lift $ TrKey <$> getKey v

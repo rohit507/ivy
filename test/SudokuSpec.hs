@@ -23,6 +23,7 @@ import Control.Monad.Free
 
 import Data.POrd
 import Data.Lattice
+import Data.Transaction
 import qualified Data.IntSet as IntSet
 import qualified Data.IntMap as IntMap
 import qualified Data.HashMap.Lazy as HashMap
@@ -71,7 +72,7 @@ instance Lattice Final where
 
   latJoin (Final a) (Final b)
     | a == b = val $ Final a
-    | otherwise = top ( "Square cannot be both " <> show a
+    | otherwise = top ( "Cell cannot be both " <> show a
                         <> " and " <> show b <> "." :: String)
 
   latMeet (Final a) (Final b)
@@ -82,49 +83,55 @@ instance Lattice Final where
 newtype Group a = Grp [a]
 
 -- | A single number in the sudoku puzzle
-newtype Square a = Square a
+newtype Cell a = Cell a
 
 -- | This one' simple enough, if we have only one option in the list of
 --   available options for a square, set the final value to that one.
-finalRule :: forall m. ( MonadTermGraph m
+finalRule :: forall m e. ( MonadTermGraph m
                       , MonadLatMap Options m
                       , MonadLatMap Final m
                       , MonadPropRule Options m
                       , MonadPropRule Final m
-                      , TermCons Square m
+                      , MonadError e m
+                      , TransactionErr e
+                      , Typeable m
+                      , TermCons Cell m
                       , LatCons m Final
                       , LatCons m Options
                       , LatMemb m Final  ~ Final
                       , LatMemb m Options ~ Options)
-          => Term Square m -> m ()
+          => Term Cell m -> Transaction m ()
 finalRule t = do
-  Square v <- getTerm t
-  kOpt :: Key m Options <- getKey v
-  kFin :: Key m Final   <- getKey v
+  Cell v <- getTerm t
+  kOpt :: KeyT m Options <- getKey v
+  kFin :: KeyT m Final   <- getKey v
   Opts s <- getLat kOpt
   case IntSet.elems s of
-    h:[] -> bindLat kFin (Final h) *> pure ()
+    [h] -> bindLat kFin (Final h) *> pure ()
     _    -> pure ()
 
 -- | This rule will just ensure that, when we change the final value of a square
 --   the options are correctly updated. This should only come into play when
 --   we manually bind a final value. Otherwise it should just be a standard
 --   byproduct of what we're doing.
-invFinalRule :: forall m. ( MonadTermGraph m
+invFinalRule :: forall m e. ( MonadTermGraph m
                       , MonadLatMap Options m
                       , MonadLatMap Final m
                       , MonadPropRule Final m
                       , MonadPropRule Options m
-                      , TermCons Square m
+                      , TermCons Cell m
+                      , MonadError e m
+                      , Typeable m
+                      , TransactionErr e
                       , LatCons m Final
                       , LatCons m Options
                       , LatMemb m Final  ~ Final
                       , LatMemb m Options ~ Options)
-          => Term Square m -> m ()
+          => Term Cell m -> Transaction m ()
 invFinalRule t = do
-  Square v <- getTerm t
-  kOpt :: Key m Options <- getKey v
-  kFin :: Key m Final  <- getKey v
+  Cell v <- getTerm t
+  kOpt :: KeyT m Options <- getKey v
+  kFin :: KeyT m Final  <- getKey v
   Final s <- getLat kFin
   bindLat kOpt (Opts . IntSet.singleton $ s)
   pure ()
@@ -144,10 +151,13 @@ splits (a:as) = (a,as) : map (\ (x,xs) -> (x,a:xs)) (splits as)
 --   so that each term in the group can trigger a chain of updates.
 --   If we don't, then the system will require every element of the group
 --   to have a final value before propagating anything.
-groupRule :: forall m. ( MonadTermGraph m
+groupRule :: forall m e. ( MonadTermGraph m
                       , MonadPropRule Options m
                       , MonadPropRule Final m
                       , Alternative m
+                      , Typeable m
+                      , MonadError e m
+                      , TransactionErr e
                       , MonadLatMap Options m
                       , MonadLatMap Final m
                       , TermCons Group m
@@ -156,36 +166,19 @@ groupRule :: forall m. ( MonadTermGraph m
                       , MonadLatMap Final m
                       , LatCons m Final
                       , LatMemb m Final ~ Final)
-          => Term Group m -> m ()
+          => Term Group m -> Transaction m ()
 groupRule t = do
   Grp ss <- getTerm t
   getAlt . mconcat . map (Alt . mkUpdater) $ splits ss
 
   where
-    mkUpdater :: (Vert m, [Vert m]) -> m ()
+    mkUpdater :: (Vert m, [Vert m]) -> Transaction m ()
     mkUpdater (trig,respns) = do
-      kFin :: Key m Final <- getKey trig
+      kFin :: KeyT m Final <- getKey trig
       Final v <- getLat kFin
       for_ respns $ \ n -> do
-        kOpt :: Key m Options <- getKey n
+        kOpt :: KeyT m Options <- getKey n
         bindLat kOpt (holeOpt v)
-
--- | We need to split operations here into a pre-set (for running live)
---   and a post-set (changes to run later)
---
---   Stateless - getKey (While the operation does happen in M this shouldn't
---                       actually reference the greater state of the system.)
---               getTerm (This should always return a term with the
---                        appropriate variables set)
---
---   Pre - getVert - Wait on Vert
---         getLat  - Wait on Key
---
---   Post - addTerm
---        - bindLat
---        - equals
---        - subsumes
---        - addRule?
 
 -- | This rigamarole lets us cache the options that are missing one
 --   element instead of rebuilding them repeatedly. Admittedly, this
@@ -199,57 +192,30 @@ holeMap = IntMap.fromList $ zip [1..9] (map makeHole [1..9])
 holeOpt :: Int -> Options
 holeOpt h = holeMap IntMap.! h
 
-{-
-instance (MonadError e m) => MonadError e (TransactT s m) where
-  throwError = TopT
+makeSudoku :: forall m e. ()
+           => m (IntMap (Vert m))
+makeSudoku = undefined
+  where
 
--}
+    makeCell :: m (IntMap (Vert m))
+    makeCell = undefined -- TODO :: Don't forget to add the Cell terms.
 
+    makeRow :: IntMap (Vert m) -> Int -> m ()
+    makeRow = undefined
 
-{-
-instance Monad (TransactT t f m) where
-  a >>= b = undefined
+    makeCol :: IntMap (Vert m) -> Int -> m ()
+    makeCol = undefined
 
+    makeSquare :: IntMap (Vert m) -> (Int, Int) -> m ()
+    makeSquare = undefined
 
--}
+printSudoku :: IntMap (Vert m) -> m String
+printSudoku = undefined
 
-{-
-instance (MonadTermLat m) => MonadTermLat (TransactT t f m) where
+setCell :: IntMap (Vert m) -> Int -> Int -> m ()
+setCell = undefined
 
-  getKey :: (MonadLatMap v m, LatCons m v)
-    => Vert m -> TransactT t f m (KeyT t f m v)
-  getKey = undefined
-
-  getVert :: (MonadLatMap v m, LatCons m v)
-    => KeyT t f m v -> Vert m
-  getVert = undefined
--}
-
--- We want to make the above rules apply to a new monad of ours, a transaction
--- which collects the operations that can edit a termgraph
-
-
-
--- TODO ::
---
---   - Define lattice instance for Options
---   - Define a rule for a group
---     -- get all consts in group, all options are grp - consts.
---
---   - W/in initial tests
---     -- create 81 verts
---     -- associate each group of verts
---     -- assign values to verts and see how those propagate as we tell
---        the system to quiesce
---     -- Test that it can catch broken assignments.
---
---   - W/in later tests
---     -- Add rule w/ only triggers when quiesced and unsolved
---        -- picks a random assignment for an ambiguous value
---        -- creates shadow network w/ that value assigned
---           -- if errors on quiesce then remove from options.
---           -- if sucessful sets all terms in parent network.
---           -- don't do anything on partial, just wait.
---
--- NOTE :: Doing this properly probably means we should have some notion
---        of task priorities and running hooks in some priority order.
+-- Make the 81 verts
+-- make each row
+-- make each col
+-- make each square

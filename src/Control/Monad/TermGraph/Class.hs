@@ -28,6 +28,9 @@ class (Eq (Vert m), Hashable (Vert m), Monad m) => MonadTermGraph m where
 
   type TermCons (t :: * -> *) m :: Constraint
 
+  -- | Create a fresh vertex in the term graph, we can use for whatever.
+  newVert :: m (Vert m)
+
   -- | Given some relationship between vertices, adds it to the graph, and
   --   returns a reference to said relationship.
   addTerm :: (TermCons t m) => (t (Vert m)) -> m (Term t m)
