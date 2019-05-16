@@ -1,8 +1,10 @@
--- This file has been generated from package.yaml by hpack version 0.28.2.
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.1.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e443fd83bce7cb002f2b5fb9dc052ecc8f7886080cb4eaeef10cb526b3709720
+-- hash: 6d06c6d5c5fbeaff11a43ef8c493d9c9985d3b10930096152ea85c96b7314dc7
 
 name:           ivy
 version:        0.1.0.0
@@ -13,7 +15,6 @@ copyright:      2019 Rohit Ramesh
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
-cabal-version:  >= 1.10
 extra-source-files:
     README.md
 
@@ -25,6 +26,7 @@ library
       Control.Monad.Lat.Class
       Control.Monad.LatMap.Class
       Control.Monad.Prop.Class
+      Control.Monad.PropRule.Class
       Control.Monad.TermGraph.Class
       Control.Monad.Trigger.Class
       Data.Functor.Foldable.Reify
@@ -67,6 +69,7 @@ test-suite tasty
       Control.Monad.Lat.Class
       Control.Monad.LatMap.Class
       Control.Monad.Prop.Class
+      Control.Monad.PropRule.Class
       Control.Monad.TermGraph.Class
       Control.Monad.Trigger.Class
       Data.Functor.Foldable.Reify

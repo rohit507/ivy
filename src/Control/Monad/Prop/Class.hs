@@ -18,21 +18,9 @@ import Control.Monad.TermGraph.Class
 import Control.Monad.LatMap.Class
 import Data.Transaction
 
-class (MonadTermGraph m) => MonadTermLat m where
-
-  -- data Operation m :: *
-  -- type Operation m = Transaction () (F (Edit m)) m
-
-  -- | getKey and getVert define an isomorphism between vertices on the term
-  --   graph and keys. getKey here should only fail when the type of v
-  --   requested is incorrect.
-  getKey :: forall v. (MonadLatMap v m, LatCons m v)
-    => Vert m -> m (Key m v)
-
-  getVert :: forall v. (MonadLatMap v m, LatCons m v)
-    => Key m v -> Vert m
-
-class (MonadTermLat m) => MonadProp m where
+-- | FIXME :: Do we even want this, instead of just treating a propagation
+--   network as a single (Pure-ish) value?
+class (Monad m) => MonadProp m where
 
   -- | Will run all rules until there are no more to run.
   quiesce :: m ()
@@ -51,4 +39,4 @@ class (MonadTermLat m) => MonadProp m where
   --   TODO :: Find better way to do this, maybe consolidate constraint
   --           dicts into a single newtype.
   addRule :: forall t. (TermCons t m)
-    => (Term t m -> TransactT s m ()) -> m ()
+    => (Term t m -> Transaction m ()) -> m ()

@@ -1,3 +1,6 @@
+-- {-# LANGUAGE UndecidableInstances #-}
+-- {-# LANGUAGE AllowAmbiguousTypes #-}
+
 {-|
 Module      : Data.Transaction
 Description : Type of suspended computations over a set of triggers.
@@ -8,6 +11,13 @@ Stability   : experimental
 Portability : POSIX
 
 FIXME :: Concept needs better name -_-
+
+FIXME :: A Transaction is some unholy mixture of LatT, FreeT, ReaderT, ListT,
+  and quite possibly more besides.
+
+    - Is there some way to decompose it into a transformer stack?
+    - If there is, should we?
+
 -}
 
 module Data.Transaction where
@@ -17,29 +27,76 @@ import Data.Functor (fmap)
 
 import Control.Monad.Lat.Class
 import Control.Monad.LatMap.Class
--- import Control.Monad.Prop.Class
+import Control.Monad.PropRule.Class
 import Control.Monad.TermGraph.Class
 import Control.Monad.Free
 
 import Data.POrd
 import Data.Lattice
-import qualified Data.IntSet as IntSet
+import Data.Typeable
 import qualified Data.IntMap as IntMap
 import qualified Data.HashMap.Lazy as HashMap
 
+-- We disable these warnings since actually applying them strips
+-- types of the higher order polymorphism that GHC needs to typechecks
+{-# ANN module ("HLint: ignore Use const" :: String) #-}
+{-# ANN module ("HLint: ignore Use >=>" :: String) #-}
+{-# ANN module ("HLint: ignore Use fmap" :: String) #-}
+
 newtype a ~> b = Morph { getMorph :: forall x. a x -> b x }
 
-newtype TransactT s m a where
-  TT :: {unTT :: (Edit m ~> m) -> Transaction s m a }
-    -> TransactT s m a
+data Trigger m where
+   TKey :: ( MonadLatMap v m
+          , LatCons v m
+          , Eq (Key m v)
+          , Hashable (Key m v)
+          , Typeable v)
+     => Key m v -> Trigger m
+   TVert :: (Eq (Vert m), Hashable (Vert m))
+     => Vert m -> Trigger m
 
-data Transaction s m a where
-  WatchT :: HashMap s (s -> m (TransactT s m a)) -> Transaction s m a
-  TopT  :: (MonadError e m) => e -> Transaction s m a
-  BotT  :: Transaction s m a
-  RunT  :: F (Edit m) a -> Transaction s m a
-  LiftT :: m (TransactT s m a) -> Transaction s m a
-  ManyT :: [TransactT s m a] -> Transaction s m a
+class (Typeable e) => TransactionErr e where
+  expectedKeyTrigger  :: (Typeable m) => Trigger m -> e
+  expectedVertTrigger :: (Typeable m) => Trigger m -> e
+  invalidKeyType :: e
+
+throwExpectedKeyTrigger :: (TransactionErr e, MonadError e m, Typeable m)
+                        => Trigger m -> m a
+throwExpectedKeyTrigger = throwError . expectedKeyTrigger
+
+throwExpectedVertTrigger :: (TransactionErr e, MonadError e m, Typeable m)
+                        => Trigger m -> m a
+throwExpectedVertTrigger = throwError . expectedVertTrigger
+
+throwInvalidKeyType :: (TransactionErr e, MonadError e m, Typeable m) => m a
+throwInvalidKeyType = throwError invalidKeyType
+
+instance Eq (Trigger m) where
+
+  TKey (a :: Key m a) == TKey (b :: Key m b)
+    = case (eqT :: Maybe (a :~: b)) of
+        Nothing   -> False
+        Just Refl -> a == b
+
+  TVert a == TVert b = a == b
+  _ == _ = False
+
+instance Hashable (Trigger m) where
+  hashWithSalt s (TVert v) = hashWithSalt s v
+  hashWithSalt s (TKey k) = hashWithSalt s k
+
+newtype TransactT m a where
+  TT :: {unTT :: (Edit m ~> m) -> Transaction m a }
+    -> TransactT m a
+
+
+data Transaction m a where
+  WatchT :: HashMap (Trigger m) (Trigger m -> m (TransactT m a)) -> Transaction m a
+  TopT  :: (MonadError e m) => e -> Transaction m a
+  BotT  :: Transaction m a
+  RunT  :: F (Edit m) a -> Transaction m a
+  LiftT :: m (TransactT m a) -> Transaction m a
+  ManyT :: [TransactT m a] -> Transaction m a
 
 -- | An edit captures a single concrete change we could make to our
 --   lattice map.
@@ -47,22 +104,29 @@ data Transaction s m a where
 --   When we use this within a free monad we have
 data Edit m a where
 
-  AddTerm :: (MonadTermGraph m, TermCons t m)
+  AddE      :: (MonadTermGraph m, TermCons t m)
     => t (Vert m) -> Edit m (Term t m)
 
-  Put      :: (MonadLatMap v m, LatCons m v)
+  PutE      :: (MonadLatMap v m, LatCons m v)
     => LatMemb m v -> Edit m (Key m v)
 
-  Bind     :: (MonadLatMap v m, LatCons m v)
+  BindE     :: (MonadLatMap v m, LatCons m v)
     => Key m v -> LatMemb m v -> Edit m (Key m v)
 
-  Equals   :: (MonadLatMap v m, LatCons m v)
+  EqualsE   :: (MonadLatMap v m, LatCons m v)
     => Key m v -> Key m v -> Edit m (Key m v)
 
-  Subsumes :: (MonadLatMap v m, LatCons m v)
+  SubsumesE :: (MonadLatMap v m, LatCons m v)
     => Key m v -> Key m v -> Edit m Bool
 
-instance (Functor m) => Functor (Transaction s m) where
+  -- | Help, I have no idea what I'm supposed to be doing here.
+  MapE :: (a ~ a') => Edit m a -> (a' -> b) -> Edit m b
+
+instance Functor (Edit m) where
+  fmap f (MapE a g) = MapE a (f . g)
+  fmap f e = MapE e f
+
+instance (Functor m) => Functor (Transaction m) where
   fmap _ (TopT   e) = TopT e
   fmap _ BotT       = BotT
   fmap f (ManyT  l) = ManyT $ map f <$> l
@@ -70,13 +134,13 @@ instance (Functor m) => Functor (Transaction s m) where
   fmap f (RunT   a) = RunT $ map f a
   fmap f (LiftT  a) = LiftT $ fmap f <$> a
 
-instance (Functor m) => Functor (TransactT s m) where
+instance (Functor m) => Functor (TransactT m) where
   fmap f (TT fm) = TT (\ s -> f <$> fm s)
 
-instance (Functor m) => Applicative (Transaction s m) where
+instance (Functor m) => Applicative (Transaction m) where
   pure = RunT . pure
 
-  (<*>) :: Transaction s m (a -> b) -> Transaction s m a -> Transaction s m b
+  (<*>) :: Transaction m (a -> b) -> Transaction m a -> Transaction m b
   -- We want errors to be propagated forward as early as possible so that
   -- we don't keep rules hanging around longer than neccesary.
   (TopT e) <*> _ = TopT e
@@ -95,19 +159,19 @@ instance (Functor m) => Applicative (Transaction s m) where
     (\ f -> TT (\ s -> unTT f s <*> a)) mf
   f <*> (WatchT ma) = WatchT $ (map . map . map)
     (\ a -> TT (\ s -> f <*> unTT a s)) ma
-  -- Otherwise we follow the rules for the free monad.
+  -- Otherwise we follow the rules fWor the free monad.
   (RunT   f ) <*> (RunT   a ) = RunT $ f <*> a
 
   -- And well, we're just waiting
   (LiftT a) <*> b = LiftT $ (\ (TT sa) -> TT (\ s -> sa s <*> b)) <$> a
   a <*> (LiftT b) = LiftT $ (\ (TT sb) -> TT (\ s -> a <*> sb s)) <$> b
 
-instance (Functor m) => Applicative (TransactT s m) where
+instance (Functor m) => Applicative (TransactT m) where
   pure a = TT (\ _ -> pure a)
 
   TT sf <*> TT sa = TT (\ s -> sf s <*> sa s)
 
-instance (Applicative m, Eq s, Hashable s) => Alternative (Transaction s m) where
+instance (Applicative m) => Alternative (Transaction m) where
   empty = BotT
 
   BotT <|> b = b
@@ -118,10 +182,10 @@ instance (Applicative m, Eq s, Hashable s) => Alternative (Transaction s m) wher
 
   WatchT ma <|> WatchT mb = WatchT $ HashMap.unionWith deepAlt ma mb
     where
-      deepAlt :: (s -> m (TransactT s m a))
-              -> (s -> m (TransactT s m a))
-              -> (s -> m (TransactT s m a))
-      deepAlt fa fb = \ s -> (<|>) <$> fa s <*> fb s
+      deepAlt :: (Trigger m -> m (TransactT m a))
+              -> (Trigger m -> m (TransactT m a))
+              -> (Trigger m -> m (TransactT m a))
+      deepAlt fa fb s = (<|>) <$> fa s <*> fb s
 
   a <|> WatchT mb = WatchT $ (map . map . map)
     (\ b -> TT (\ s -> a <|> unTT b s)) mb
@@ -138,12 +202,12 @@ instance (Applicative m, Eq s, Hashable s) => Alternative (Transaction s m) wher
   a <|> b = ManyT [TT (\ _ -> a), TT (\ _ -> b)]
 
 
-instance (Applicative m, Eq s, Hashable s) => Alternative (TransactT s m) where
+instance (Applicative m) => Alternative (TransactT m) where
   empty = TT (\ _ -> empty)
 
   TT sa <|> TT sb = TT (\ s -> sa s <|> sb s)
 
-instance (Monad m) => Monad (Transaction s m) where
+instance (Monad m) => Monad (Transaction m) where
  TopT e >>= _ = TopT e
  BotT >>= _ = BotT
  WatchT ma >>= f = WatchT $ (map . map . map)
@@ -151,58 +215,69 @@ instance (Monad m) => Monad (Transaction s m) where
 
  LiftT a >>= f = LiftT $ (\ ta -> TT (\ s -> unTT ta s >>= f)) <$> a
 
- RunT a >>= f = LiftT . return $ TT (\ s -> foldF (getMorph s) >>= pure)
+ RunT a >>= f = LiftT . pure $ TT (\ s -> LiftT (pure <$> foldF (getMorph s) a) >>= f)
 
-instance (Monad m) => Monad (TransactT s m) where
+ ManyT a >>= f = ManyT . map (\ ta -> TT (\ s -> unTT ta s >>= f)) $  a
+
+instance MonadTrans Transaction where
+  lift = LiftT . map pure
+
+instance (Monad m) => Monad (TransactT m) where
   TT sa >>= f = TT (\ s -> sa s >>= (\ x -> unTT (f x) s))
 
-instance (MonadError e m) => MonadError e (TransactT s m)
-instance (MonadError e m) => MonadError e (Transaction s m)
+type KeyT m = Key (Transaction m)
 
-type KeyT s m = Key (Transaction s m)
+instance (MonadLatMap v m)
+  => MonadLatMap v (Transaction m) where
+  newtype Key  (Transaction m) v = TrKey { unTrKey :: Key m v }
+  type LatMemb (Transaction m) v = LatMemb m v
+  type LatCons (Transaction m) v = LatCons m v
 
-instance (MonadLatMap v m) => MonadLatMap v (Transaction s m) where
-  data Key     (Transaction s m) v = TKey (Key m v)
-  type LatMemb (Transaction s m) v = LatMemb m v
-  type LatCons (Transaction s m) v = LatCons m v
-
+  -- | Actions to insert a value into the lattice are held w/in an F Edit
+  --   so we can collect them and run them all at the end.
   putLat   :: (LatCons m v)
     => LatMemb m v
-    -> Transaction s m (KeyT s m v)
-  putLat = undefined
+    -> Transaction m (KeyT m v)
+  putLat l = map TrKey . RunT . liftF $ PutE l
 
-  getLat   :: (LatCons m v)
-    => KeyT s m v
-    -> Transaction s m (LatMemb m v)
+  -- | Other actions (like getLat) tell us the rest of the monad is to
+  --   be used
+  getLat   :: (MonadLatMap v m, LatCons m v)
+    => KeyT m v
+    -> Transaction m (LatMemb m v)
   getLat = undefined
 
   bindLat  :: (LatCons m v)
-    => KeyT s m v
+    => KeyT m v
     -> LatMemb m v
-    -> Transaction s m (KeyT s m v)
-  bindLat = undefined
+    -> Transaction m (KeyT m v)
+  bindLat (TrKey k) l = map TrKey . RunT . liftF $ BindE k l
 
   equals   :: (LatCons m v)
-    => KeyT s m v
-    -> KeyT s m v
-    -> Transaction s m (KeyT s m v)
-  equals = undefined
+    => KeyT m v
+    -> KeyT m v
+    -> Transaction m (KeyT m v)
+  equals (TrKey a) (TrKey b) = map TrKey . RunT . liftF $ EqualsE a b
 
   subsumes :: (LatCons m v)
-    => KeyT s m v
-    -> KeyT s m v
-    -> Transaction s m Bool
-  subsumes = undefined
+    => KeyT m v
+    -> KeyT m v
+    -> Transaction m Bool
+  subsumes (TrKey a) (TrKey b) = RunT . liftF $ SubsumesE a b
 
-instance (MonadTermGraph m) => MonadTermGraph (Transaction s m) where
+instance (MonadTermGraph m) => MonadTermGraph (Transaction m) where
 
-  type Term t' (Transaction s m) = Term t' m
-  type Vert (Transaction s m) = Vert m
-  type TermCons t' (Transaction s m) = TermCons t' m
+  type Term t (Transaction m) = Term t m
+  type Vert (Transaction m) = Vert m
+  type TermCons t (Transaction m) = TermCons t m
 
-  addTerm :: (TermCons t' m)
-    => (t' (Vert (Transacttion s m))) -> Transaction s m (Term t' m)
-  addTerm = undefined
+  addTerm :: (TermCons t m)
+    => t (Vert (Transaction m)) -> Transaction m (Term t m)
+  addTerm = RunT . liftF . AddE
 
-  getTerm :: (TermCons t' m) => Term t' m -> Transaction s m (t' (Vert m))
-  getTerm = undefined
+  getTerm :: (TermCons t m) => Term t m -> Transaction m (t (Vert m))
+  getTerm = lift . getTerm
+
+instance (MonadPropRule m) => MonadPropRule (Transaction m) where
+  getKey = undefined
+  getVert = undefined
