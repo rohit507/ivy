@@ -14,54 +14,70 @@ module Ivy.Scratchpad where
 import Ivy.Prelude
 import Data.Functor.Contravariant
 
-class Generator v g | g -> v where
-  get   :: g -> (v , g)
-  split :: g -> (g , g)
+-- | A Generator will create many purely unique idents. The assumption
+--   is that generators are pure and correct. In practice it might be a
+--   good idea to wrap up an IO action or something.
+--
+--   TODO :: Do we need this class at all? can we just let the specific
+--          implementation of an update map will take care of everything?
+class Generator ident g | g -> ident where
 
+  -- | Extracts a single value from the generator and returns what remains.
+  --   The generator returned, or any generators derived from it, should
+  --   never pro
+  newVal  :: g -> (ident , g)
+
+  -- | Splits a generator into two orthogonal generators, such that no
+  --   identifier can ever be produced by both returned generators.
+  splitGen :: g -> (g , g)
+
+  -- | Given two split generators (w/ disjoint domains) combine them into
+  --   a single generator.
+  --
+  --   The default definition of mergeGen will just return the first generator
+  --   in the pair, and throw away the second. Override this if it would
+  --   be more memory or time efficient to.
+  mergeGen :: (g, g) -> g
+  mergeGen = fst
 
 -- | This is a term variable expression which stores some arbitrary depth
---   term in t, where all leaf nodes are Vars.
+--   term in t, where all leaf nodes are `v`s. This is isomorphic to `UTerm t v`
+--   from `unification-fd` but with shorter constructors.
 --
---   This object should only ever be provided by the user, and never
---   given to them, since it destroys all the scoping information for
---   vars inside it.
---
---   Yeah, that means it can be used to sneak vars out of the scope in which
---   they were established, I'll see if there's a way to prevent that
---   in what we're up to.
---
---   I'm not actually sure there is a way to do that. :|
---
---   TODO :: Switch this back to the `TV t v` model where it's isomorphic to a
---          UTerm.
-data TV (m :: Type -> Type) where
+--   TODO :: Consider just making this a set of pattern synonyms over `UTerm`.
+data TV t v where
 
   -- | This is the constructor for a term, we keep it short because people
   --   will be using this rather a lot.
-  T :: (UnificationMap e m t) => {getT :: t (TV m)} -> TV m
+  T :: {getT :: !(t (TV t v))} -> TV t v
 
   -- | Constructor that holds a variable with some arbitrary phantom.
   --   This is mostly for convenience so that one doesn't need to cast
   --   values repeatedly.
-  V :: (UnificationMap e m t) => Var m v -> TV m
+  V :: {getV :: !v} -> TV t v
 
--- | This is an existentially quantified variable we use to ease the
---   burden of constructing a new term.
-data EV (m :: Type -> Type) where
-  EV :: (UnificationMap e m t) => Var m v -> EV m
 
-class (Semigroup e, Traversable t, Eq1 t, Hashable1 t)
-      => Unifiable e (t :: Type -> Type) where
+class (Traversable t, Eq1 t, Hashable1 t)
+      => Unifiable t  where
 
-  unifyTerm :: t v -> t v -> Either e (t (Either (v,v) v))
+  type UnificationErr t e :: Constraint
+
+  unifyTerm :: (UnificationErr t e) => t v -> t v -> Either e (t (Either (v,v) v))
 
 -- | This allows hooks to manage their own cleanup operations, ideally
 --   in a way that will effectively get rid of unneccesary ones.
 data HookStatus m where
+
+  -- | Keep this hook
   Keep :: HookStatus m
+
+  -- | Discard the hook when run
   Discard :: HookStatus m
-  Replace :: UnificationMap e m t
-          => (forall v. t (Var m v) -> t (Var m v) -> Update m (HookStatus m))
+
+  -- | Replace the current hook with a new one that presumably stores
+  --   some info.
+  Replace :: UnificationMap v m t
+          => Hook m
           -> HookStatus m
 
 -- | This class presents a map of variables to (recursive) terms in a
@@ -75,26 +91,25 @@ data HookStatus m where
 --   over sets of changes, while preserving useful information from them and
 --   preventing leaks of references from domain to domain.
 --
---   TODO :: Remove CPS style from this class and just let the instances
---          definition of `Update m` do its thing.
---
---   TODO :: Consider just not trying to manage the scope of variables with all
---          the foralls.
-class (Unifiable e t)
-        => UnificationMap e (m :: Type -> Type) (t :: Type -> Type) | m -> t, t -> e where
+--   We allow `m` to be of any kind because there's no real requirement it
+--   be a monad or something. This interface explicitly chooses to not require
+--   a way to extract m, since it could either be a monad of some sort or
+--   just a classic container.
+class (Unifiable t) => UnificationMap (m :: k) t | m -> t where
 
   -- | This is an update that tells us how to modify a unification map.
   type Update m = (res :: Type -> Type) | res -> m
 
-  -- | The variables, or references to them, which are bound to terms
-  --   in the resulting map.
-  --
-  --   Ideally the `v` in any `Var m v` is a phantom type variable.
-  --   Which only exists to ensure that we don't leak variables out of scope.
-  --
-  --   Ideally any instances of this class would hide the actual type and
-  --   constructor used for `Var m`.
-  type Var m = (res :: Type -> Type) | res -> m
+  -- | This is a variable that has a unifiable term associated with it.
+  --   generally defined by `m` in one way other.
+  type Var m :: Type
+
+  -- | If we want to manage hooks in some way, we can give them keys so
+  --   we can recover or manipulate them.
+  type HookKey m :: Type
+
+  -- | The type of hooks for this type of unification map.
+  type Hook m :: Type
 
   -- | Pass in a continuation that uses a new variable to get a map update
   --   and get the corresponding update.
@@ -102,7 +117,7 @@ class (Unifiable e t)
   --   We use a first order type here in order to limit the scope of
   --   variable being created. As it is, one shouldn't be able to
   --   extract a key from the continuation
-  freeVar :: (forall v. Var m v -> Update m a) -> Update m a
+  freeVar :: Update m (Var m)
 
   -- | Sets a variable to some term, in this case we use the
   --   convenient little existential type wrapper for vars to
@@ -110,54 +125,64 @@ class (Unifiable e t)
   --
   --   This should probably be set up so that the only way to
   --   extract one of these vars is in a new context that
-  setVar  :: Var m v -> t (EV m) -> Update m a -> Update m a
+  setVar :: t (Var m) -> Var m -> Update m ()
 
-  -- | The first variable is <= the second.
-  subsumes :: Var m v -> Var m v' -> (Bool -> Update m a) -> Update m a
+  -- | Asserts that the first variable is <= the second.
+  subsumes :: (Var m) -> (Var m) -> Update m Bool
 
-  -- | Tells us whether two terms have been unified.
-  equals :: Var m v -> Var m v' -> (Bool -> Update m a) -> Update m a
+  -- | Tells us whether two terms have been unified. Does not change
+  --   the state of the update, just return information.
+  equals :: (Var m) -> (Var m) -> Update m Bool
+
+  -- | Get the single layer term for some variable or `Nothing` if
+  --   the var is unbound.
+  getTerm  :: Var m  -> Update m (Maybe (t (Var m)))
 
   -- | Given two updates, this produces a parallel merge of those two updates.
   --   really, it's the implementation of this that determines the degree of
   --   parallelism that's used as things update and actions are performed.
+  --
+  --   It's rather important that both updates use a split identifier space
+  --   otherwise the final merge action can have aliasing errors.
   merge    :: Update m a
            -> Update m b
            -> Update m (a,b)
 
-  -- | Add a hook that is run when the term for some variable is changed.
+  -- | Adds a single hook to the unification map, by default
+  addHook :: HookKey m -> Hook m -> Var m -> Update m ()
+  addHook k h v = addHooks [(k,[h])] v
+
+  -- | Add hooks that are run when the term for some variable is changed.
   --   Yeah, this is a bit weird, since it's how we basically create
   --   propagator update hooks.
-  --
-  --   Keep in mind this is
-  addHook :: Var m v
-          -> (forall v'. t (Var m v') -> t (Var m v') -> Update m (HookStatus m))
+  addHooks :: [(HookKey m, [Hook m])]
+          -> Var m
           -> Update m ()
+
+  -- | Retrieves all the hooks for some given key and var.
+  getHooks :: HookKey m -> Var m -> Update m [Hook m]
+
+  -- | Gets every hook for some given key.
+
+  -- | Removes all the hooks for a variable under some key.
+  removeHooks :: HookKey m -> Var m -> Update m [Hook m]
 
   -- | Try an update, if the action should be rolled back (returns a `Left f`)
   --   then do so, and run the recovery function.
   --
   --   Keep in mind that the f here isn't actually an error per-se, just
-  --   some knowledge that has been gained from the rolled back
+  --   some knowledge that has been gained from the rolled back computation.
+  --   Say if you're doing CDCL `f` would be the newly learned conflict clause.
+  --
+  --   The semantics if you do hit an error within the initial transaction
+  --   aren't super well defined
   attempt :: Update m (Either f s) -> (f -> Update m b) -> Update m (Either b s)
 
   -- | Combine one update which happens after another into a single
   --   (hopefully somehow compressed or minimized) update. This is probably
   --   just a bind of some sort.
-  sequence :: Update m a
-           -> (a -> Update m b)
-           -> Update m b
+  sequence :: Update m a -> (a -> Update m b) -> Update m b
 
-  -- | If you give it a variable whose term you want to get, and what you
-  --   intend to do with that term, then this returns the action after that
-  --   point.
-  getTerm  :: Var m v
-           -> (forall v'. Either e (t (Var m v')) -> Update m a)
-           -> Update m a
-
-
-foo :: (UnificationMap e m t) =>  Update m ()
-foo = freeVar (\ a -> freeVar (\ b -> subsumes a b undefined))
 
 {-
 -- | If you have an expression, generate a new variable
