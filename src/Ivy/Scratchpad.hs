@@ -38,21 +38,6 @@ class (Traversable t, Eq1 t, Hashable1 t)
 
   unifyTerm :: (UnificationErr t e) => t v -> t v -> Either e (t (Either (v,v) v))
 
--- | This allows hooks to manage their own cleanup operations, ideally
---   in a way that will effectively get rid of unneccesary ones.
-data HookStatus m where
-
-  -- | Keep this hook
-  Keep :: HookStatus m
-
-  -- | Discard the hook when run
-  Discard :: HookStatus m
-
-  -- | Replace the current hook with a new one that presumably stores
-  --   some info.
-  Replace :: UnificationMap v m t
-          => Hook m
-          -> HookStatus m
 
 -- | This class presents a map of variables to (recursive) terms in a
 --   continuation passing style.
