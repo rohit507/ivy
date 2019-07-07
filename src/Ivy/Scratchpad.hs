@@ -14,32 +14,6 @@ module Ivy.Scratchpad where
 import Ivy.Prelude
 import Data.Functor.Contravariant
 
--- | A Generator will create many purely unique idents. The assumption
---   is that generators are pure and correct. In practice it might be a
---   good idea to wrap up an IO action or something.
---
---   TODO :: Do we need this class at all? can we just let the specific
---          implementation of an update map will take care of everything?
-class Generator ident g | g -> ident where
-
-  -- | Extracts a single value from the generator and returns what remains.
-  --   The generator returned, or any generators derived from it, should
-  --   never pro
-  newVal  :: g -> (ident , g)
-
-  -- | Splits a generator into two orthogonal generators, such that no
-  --   identifier can ever be produced by both returned generators.
-  splitGen :: g -> (g , g)
-
-  -- | Given two split generators (w/ disjoint domains) combine them into
-  --   a single generator.
-  --
-  --   The default definition of mergeGen will just return the first generator
-  --   in the pair, and throw away the second. Override this if it would
-  --   be more memory or time efficient to.
-  mergeGen :: (g, g) -> g
-  mergeGen = fst
-
 -- | This is a term variable expression which stores some arbitrary depth
 --   term in t, where all leaf nodes are `v`s. This is isomorphic to `UTerm t v`
 --   from `unification-fd` but with shorter constructors.
