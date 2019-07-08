@@ -22,6 +22,7 @@ dependencies:
   - hedgehog
   - free
   - containers
+  - monad-control
   - unordered-containers
   - constraints
   - recursion-schemes

@@ -13,6 +13,7 @@ module Ivy.Scratchpad where
 
 import Ivy.Prelude
 import Data.Functor.Contravariant
+import Control.Monad.Trans.Control
 
 -- | This is a term variable expression which stores some arbitrary depth
 --   term in t, where all leaf nodes are `v`s. This is isomorphic to `UTerm t v`
@@ -35,6 +36,9 @@ class (Traversable t, Eq1 t, Hashable1 t) => Unifiable t  where
   -- | I like the model where we just create constraints that cover
   --   various classes, and have one big'ol datatype to implement all
   --   of the potential errors.
+  --
+  --   Therefore, you get this constraint family to tell us what constraints
+  --   an error should implement.
   type UnificationErr t e :: Constraint
 
   -- | Attempt to unify the following terms. A failure should return
@@ -152,6 +156,8 @@ class (Unifiable t, Semigroup (Hook m))
   --
   --   It's rather important that both updates use a split identifier space
   --   otherwise the final merge action can have aliasing errors.
+  --
+  --   If `Update m` is a monad then this can be taken from `MonadParallel`.
   merge    :: Update m a
            -> Update m b
            -> Update m (a,b)
@@ -166,9 +172,37 @@ class (Unifiable t, Semigroup (Hook m))
   --   An uncaught error in the initial action should rollback the state to
   --   the start of the action and then allow the error to continue propagating
   --   upward, without running the recovery action.
-  attempt :: Update m (Either f s) -> (f -> Update m b) -> Update m (Either b s)
+  --
+  --   TODO :: Hmm, stacking additional monad transformer on top of this
+  --          should be doable if they have @MonadTransControl@ instances.
+  --          But hoo boy, I've got no idea how to do that in a way that
+  --          preserves semantics.
+  attempt :: Update m (Either f b) -> (f -> Update m b) -> Update m b
 
   -- | Combine one update which happens after another into a single
   --   (hopefully somehow compressed or minimized) update. This is probably
   --   just a bind of some sort if `Update m` is a monad.
   sequence :: Update m a -> (a -> Update m b) -> Update m b
+
+-- TODO ::I intend to wrap this core interface to create an interface that
+--       allows working with terms of many different types in parallel.
+--       That way we can provide some solid foundation for layering
+--       analysis over each other, having analysis that can interact
+--       with monads above and below this on the stack.
+--
+
+-- Wait, this works badly with hooks since those triggering will themselves
+-- fiddle with the system.
+--
+-- Well, it depends on the idempotence and general properties of unification.
+-- If everything stays nice and upwards closed
+data VarData h t v
+  = Base { term :: t v, newSubs :: [v], newHooks :: [h], updated :: [v] }
+  | Merged v
+
+-- generator will probably be from concurrent-supply
+-- ideally a vardata can be implicitly transformed into an m -> m
+--
+-- The hard part here is hooks, since those are dependent on what hooks
+-- are given us with the m.
+-- data Upd generator m = UPD (generator -> VarData h t v)

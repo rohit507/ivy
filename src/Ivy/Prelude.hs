@@ -24,6 +24,7 @@ import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
 import Data.Reify as P
 import Control.Monad.Free.Church as P
+
 import GHC.Exts as P (fromListN)
 
 import Data.Functor as B
