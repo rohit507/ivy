@@ -15,45 +15,7 @@ import Ivy.Prelude
 import Data.Functor.Contravariant
 import Control.Monad.Trans.Control
 
--- | This is a term variable expression which stores some arbitrary depth
---   term in t, where all leaf nodes are `v`s. This is isomorphic to `UTerm t v`
---   from `unification-fd` but with shorter constructors.
---
---   TODO :: Consider just making this a set of pattern synonyms over `UTerm`.
-data TV t v where
-
-  -- | This is the constructor for a term, we keep it short because people
-  --   will be using this rather a lot.
-  T :: {getT :: !(t (TV t v))} -> TV t v
-
-  -- | Constructor that holds a variable with some arbitrary phantom.
-  --   This is mostly for convenience so that one doesn't need to cast
-  --   values repeatedly.
-  V :: {getV :: !v} -> TV t v
-
-class (Traversable t, Eq1 t, Hashable1 t) => Unifiable t  where
-
-  -- | I like the model where we just create constraints that cover
-  --   various classes, and have one big'ol datatype to implement all
-  --   of the potential errors.
-  --
-  --   Therefore, you get this constraint family to tell us what constraints
-  --   an error should implement.
-  type UnificationErr t e :: Constraint
-
-  -- | Attempt to unify the following terms. A failure should return
-  --   `Left e` and a success should return a `Right _` where
-  --   any `Left (v,v)` will be further unified.
-  --
-  --   TODO :: Yeah, I know that latter type is getting to be a bit much
-  --          but it'll do for now. It's not clear that a new datatype
-  --          for this one use is actually useful.
-  unifyTerm :: (UnificationErr t e)
-            => t v -> t v
-            -> Either e (t (Either (v,v) v))
-
-
--- | This class is a somewhat modified version of
+-- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It
 --   still performs structural unification, but with a few key differences:
 --
@@ -66,143 +28,119 @@ class (Traversable t, Eq1 t, Hashable1 t) => Unifiable t  where
 --   as a significant part of a synthesis process, or as an element in the
 --   analysis of inherently cyclic term graphs.
 --
---   Specifically, the rollback mechanism is meant to interact seamlessly
---   with query modes for modern SMT solvers. This mode allows you to
---   push and pop sets of constraints from a stack while preserving
---   any relevant learned clauses.
+--   TODO :: Should we go back to being more explicit about the type of each
+--           term in our graph, rather than defining interfaces that
+--           are to work over all terms?
 --
---   Note: We allow `m` to be of any kind because there's no real requirement it
---   be a monad or something. This interface explicitly chooses to not require
---   a way to extract m, since it could be a monad, a pure container, or
---   something else entirely.
+--          It's a pretty important question since it determines how generic
+--          our instances must be and how many different types of analysis
+--          they ought to support.
 --
---   Note: The operations `unify`, `equals`, `equiv`, and `subsume` /can/ all be
---   implemented in terms of the `*Var` operations, but in a number of
---   instances we will be able to get radical speedups by restricting `t`
---   and specializing those ops.
+--   NOTE :: Also we shouldn't worry too much about efficiency with rules since
+--          that can be dealt with later. For now, just be slightly lazy in
+--          in the application of rules, and probably treat definitions
+--          as a separate class?
 --
---   FIXME :: Having `Hook` as an associated type family in this class
---           renders the interface for hooks basically useless.
---           In a better world, we'd either:
+--   TODO :: Another major design decision to be made is about whether we
+--          split up the union-find and definitional layers or have them
+--          both handled by a single monolith.
 --
---             1) Provide functions in this class that allow you to construct
---                a hook. (Good)
+--          - The former should be more reusable, since we're squishing the
+--            term level semantics of a bunch of things down flat.
 --
---             2) Standardize the structure of a hook so that it's just
---                a function of some sort. (Best)
-class (Unifiable t, Semigroup (Hook m))
-      => BindUpdate (m :: k) t | m -> t where
+--          - The latter would likely be faster and easier to optimize.
+--            I suspect it would be faster to build, but not as simple
+--            to manipulate.
+--
+--
 
-  -- | This is an update that tells us how to modify a unification map.
-  --
-  --   The intention is that an implementer doesn't export `res` to
-  --   a user.
-  type Update m = (res :: Type -> Type) | res -> m
+class MonadBind m => MonadUnify m  where
 
-  -- | This is a variable that has a unifiable term associated with it.
-  --   generally defined by `m` in one way other.
-  --
-  --   The intention here is that `Var m` type is hidden from users
-  --   such that they can only use the functions in this typeclass to
-  --   work with them.
-  type Var m :: Type
-
-  -- | The type of hooks for this type of unification map.
-  type Hook m :: Type
-
-  -- | Create a new free (unbound) variable.
-  freeVar :: Update m (Var m)
-
-  -- | Get the single layer term for some variable or `Nothing` if
-  --   the var is unbound.
-  lookupVar  :: Var m -> Update m (Maybe (t (Var m)))
-
-  -- | Binds a variable to some term, unifying it with any existing
-  --   term for that variable if needed.
-  bindVar :: Var m -> t (Var m) -> Update m ()
-
-  -- | Unifies two variables and their associated terms. If the
-  --   unification fails the transaction should be rolled back
-  --   and some error returned through whatever error mechanism
-  --   `Update m` uses.
-  unify :: Var m -> Var m -> Update m (Var m)
-
-  -- | Asserts that the first variable is <= the second.
-  subsumes :: Var m -> Var m -> Update m Bool
+  -- | This allows you to unify terms in your given context.
+  unify :: (Unifiable e t, MonadError e m) => t (Var m t) -> t (Var m t) -> m (Var m t)
 
   -- | Tells us whether two terms have been unified. Does not change
   --   the state of the update, just return information.
-  equals :: Var m -> Var m -> Update m Bool
+  equals :: (Unifiable e t, MonadError e m) => t (Var m t) -> t (Var m t) -> m Bool
+
+-- | Lets you define how unification works for some specific type of term.
+class Unifiable e t where
+
+   -- | TODO :: see if we can better integrate with the partial order model
+   --           that we're using elsewhere.
+   unifyTerm :: (MonadError e m, MonadUnify m) => t v -> t v -> m (t v)
+
+-- | Monads that allow you to bind variables to terms.
+class MonadBind m where
+
+  -- | This is a variable that has a unifiable term associated with it.
+  type Var m :: (Type -> Type) -> Type
+
+  -- | Create a new free (unbound) variable. The proxy term is a bit annoying
+  --   but at least it helps ensure that everything is properly typed without
+  --   requiring a whole pile of extra effort.
+  freeVar :: (MonadError e m, Unifiable e t) => TypeRep t -> m (Var m t)
+
+  -- | Get the single layer term for some variable or `Nothing` if
+  --   the var is unbound.
+  lookupVar  :: (MonadError e m, Unifiable e t) => Var m t -> m (Maybe (t (Var m t)))
+
+  -- | Binds a variable to some term, unifying it with any existing
+  --   term for that variable if needed.
+  bindVar :: (MonadError e m, Unifiable e t) => Var m t -> t (Var m t) -> m (Var m t)
+
+
+class (MonadBind m, MonadUnify m) => MonadSubsume m where
+
+  -- | Asserts that the first variable is <= the second.
+  subsumes :: Var m t -> Var m t -> m Bool
 
   -- | Tells us whether the input terms are equivalent modulo renaming of
   --   free variables. If they are, returns a set of unifications that
   --   need to occur for both terms to be truly equivalent.
-  equiv :: Var m -> Var m -> Update m Bool
+  equiv :: Var m t -> Var m t -> m (Maybe [(Var m t, Var m t)])
 
-  -- | Adds a single hook to the unification map. Semantically this should
-  --   use the semigroup instance of `Hook m` to merge the new hook with
-  --   all previous hooks.
-  --
-  --   A hook, whatever the exact form it takes, should be triggered whenever
-  --   there is a change to
-  addHook :: Hook m -> Var m -> Update m ()
+-- | This captures injective relationships between terms. Which is to
+--   say that a vertex may be the target of many relations, but each source
+--   can only have one relation of a given type.
+--
+--   FIXME :: This interface should be a bit more concrete.
+class (MonadBind m) => MonadRelate m where
 
-  -- | Returns the hook for some given variable.
-  getHook :: Var m -> Update m (Hook m)
+  -- | Declare that the first variable is related to the second
+  --   variable.
+  --
+  --   NOTE :: if you unify the source of a relation, with another source,
+  --           their corresponding relations will also unify.
+  newRelation :: (Unifiable e t, Unifiable e t', MonadError e m)
+              => Var m t -> Var m t' -> m ()
 
-  -- | Given two updates, this produces a parallel merge of those two updates.
-  --   really, it's the implementation of this that determines the degree of
-  --   parallelism that's used as things update and actions are performed.
-  --
-  --   It's rather important that both updates use a split identifier space
-  --   otherwise the final merge action can have aliasing errors.
-  --
-  --   If `Update m` is a monad then this can be taken from `MonadParallel`.
-  merge    :: Update m a
-           -> Update m b
-           -> Update m (a,b)
+  -- | Get the target of a relation (of some type t') when given a source.
+  getTarget :: (Unifiable e t, Unifiable e t', MonadError e m)
+            => TypeRep t' -> Var m t -> m (Var m t')
+
+
+-- | A class for monads that can attempt a computation and if that computation
+--  fails rewind state and run some recovery operation
+class MonadAttempt m where
 
   -- | Try an update, if the action should be rolled back (returns a `Left f`)
   --   then do so, and run the recovery function.
   --
   --   Keep in mind that the f here isn't actually an error per-se, just
   --   some knowledge that has been gained from the rolled back computation.
-  --   Say if you're doing CDCL `f` would be the newly learned conflict clause.
-  --
-  --   An uncaught error in the initial action should rollback the state to
-  --   the start of the action and then allow the error to continue propagating
-  --   upward, without running the recovery action.
-  --
-  --   TODO :: Hmm, stacking additional monad transformer on top of this
-  --          should be doable if they have @MonadTransControl@ instances.
-  --          But hoo boy, I've got no idea how to do that in a way that
-  --          preserves semantics.
-  attempt :: Update m (Either f b) -> (f -> Update m b) -> Update m b
+  --   E.g. if you're doing CDCL `f` could be a newly learned conflict clause.
+  attempt :: m (Either f b) -> (f -> m b) -> m b
 
-  -- | Combine one update which happens after another into a single
-  --   (hopefully somehow compressed or minimized) update. This is probably
-  --   just a bind of some sort if `Update m` is a monad.
-  sequence :: Update m a -> (a -> Update m b) -> Update m b
-
--- TODO ::I intend to wrap this core interface to create an interface that
---       allows working with terms of many different types in parallel.
---       That way we can provide some solid foundation for layering
---       analysis over each other, having analysis that can interact
---       with monads above and below this on the stack.
+-- So what we want:
 --
-
--- Wait, this works badly with hooks since those triggering will themselves
--- fiddle with the system.
+--    Term Graph w/ vertices in a language and relations to terms in multiple
+--    related languages.
 --
--- Well, it depends on the idempotence and general properties of unification.
--- If everything stays nice and upwards closed
-data VarData h t v
-  = Base { term :: t v, newSubs :: [v], newHooks :: [h], updated :: [v] }
-  | Merged v
-
--- generator will probably be from concurrent-supply
--- ideally a vardata can be implicitly transformed into an m -> m
+--    newVar :: m (Vert t m)
 --
--- The hard part here is hooks, since those are dependent on what hooks
--- are given us with the m.
--- data Upd generator m = UPD (generator -> VarData h t v)
+--    The ability to attempt a computation and then rewind state if/when there's
+--    an issue.
+--
+--    Define unification rules for each type of term in the language
+--    Define hooks that trigger when the definition of a term is updated

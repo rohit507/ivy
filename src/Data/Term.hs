@@ -26,6 +26,7 @@ data RTerm l k where
   V :: k -> RTerm l k
 
 deriving instance (Functor l) => Functor (RTerm l)
+:e
 
 -- I want to be able to translate:
 --

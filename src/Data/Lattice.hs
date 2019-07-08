@@ -22,14 +22,14 @@ import Control.Monad.Lat.Class
 class (POrd l) => Lattice l where
 
   type LatErr (m :: * -> *) l :: Constraint
-  -- latBottom :: l
+
   latJoin :: (MonadLat m, LatErr m l) => l -> l -> m l
   latMeet :: (MonadLat m, LatErr m l) => l -> l -> m l
 
 class (POrdF l) => LatticeF l where
 
   type LatErrF (m :: * -> *) l p :: Constraint
-  -- liftLatBottom :: p -> l p
+
   liftLatJoin   :: (MonadLat m, LatErrF m l p)
     => (p -> p -> m p) -> l p -> l p -> m (l p)
   liftLatMeet   :: (MonadLat m, LatErrF m l p)
