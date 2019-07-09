@@ -75,6 +75,9 @@ class Unifiable e t where
 
    -- | TODO :: see if we can better integrate with the partial order model
    --           that we're using elsewhere.
+   --
+   --           in particular unifiable e t should be structurally equivalent to
+   --           JoinSemiLattice1 e t.
    unifyTerm :: (MonadError e m, MonadUnify t m) => t v -> t v -> m (t v)
 
 -- | Monads that allow you to bind variables to terms.
@@ -86,14 +89,15 @@ class MonadBind t m where
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
   --   requiring a whole pile of extra effort.
-  freeVar :: (MonadError e m, Unifiable e t) => TypeRep t -> m (Var t m)
+  freeVar :: (MonadError e m, Unifiable e t) => proxy t -> m (Var t m)
 
   -- | Get the single layer term for some variable or `Nothing` if
   --   the var is unbound.
   lookupVar  :: (MonadError e m, Unifiable e t) => Var t m -> m (Maybe (t (Var t m)))
 
   -- | Binds a variable to some term, unifying it with any existing
-  --   term for that variable if needed.
+  --   term for that variable if needed. (NOTE: This is different semantically
+  --   from the interface for `bindVar` in `unification-fd`.)
   bindVar :: (MonadError e m, Unifiable e t) => Var t m -> t (Var t m) -> m (Var t m)
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
