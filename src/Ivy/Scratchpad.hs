@@ -48,6 +48,10 @@ class (Traversable t, Eq1 t, Hashable1 t) => Unifiable t  where
   --   TODO :: Yeah, I know that latter type is getting to be a bit much
   --          but it'll do for now. It's not clear that a new datatype
   --          for this one use is actually useful.
+  --
+  --   TODO :: I should have a monad unify or something that just lets me
+  --          define how unification occours and otherwise can just
+  --          do it's thing.
   unifyTerm :: (UnificationErr t e)
             => t v -> t v
             -> Either e (t (Either (v,v) v))
