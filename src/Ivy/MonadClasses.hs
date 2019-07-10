@@ -89,7 +89,7 @@ class Unifiable e t where
    --           that we're using elsewhere.
    --
    --           in particular unifiable e t should be structurally equivalent to
-   --           JoinSemiLattice1 e t.
+   --           JoinSem iLattice1 e t.
    unifyTerm :: (MonadError e m, MonadUnify t m) => t v -> t v -> m (t v)
 
 -- | Monads that allow you to bind variables to terms.
@@ -107,9 +107,8 @@ class MonadBind t m where
   --   the var is unbound.
   lookupVar  :: (MonadError e m, Unifiable e t) => Var t m -> m (Maybe (t (Var t m)))
 
-  -- | Binds a variable to some term, unifying it with any existing
-  --   term for that variable if needed. (NOTE: This is different semantically
-  --   from the interface for `bindVar` in `unification-fd`.)
+  -- | Binds a variable to some term, overwriting any existing term for that
+  --   variable if needed.
   bindVar :: (MonadError e m, Unifiable e t) => Var t m -> t (Var t m) -> m (Var t m)
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
@@ -119,9 +118,10 @@ class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
 
 
+
 -- | A class for monads that can attempt a computation and if that computation
 --  fails rewind state and run some recovery operation
-class MonadAttempt m where
+class (Monad m) => MonadAttempt m where
 
   -- | Try an update, if the action should be rolled back (returns a `Left f`)
   --   then do so, and run the recovery function.
@@ -131,8 +131,33 @@ class MonadAttempt m where
   --   E.g. if you're doing CDCL `f` could be a newly learned conflict clause.
   attempt :: m (Either f b) -> (f -> m b) -> m b
 
-class (MonadSubsume t m)
 
+-- | The default implementation of Attempt for a monad transformer on top of
+--   a MonadAttempt.
+--
+--   You need to provide the instructions on how to compose and decompose
+--   the state for that monad transformer.
+--
+--   TODO :: Modify this to work with fmap.
+defaultLiftAttempt :: forall t m f b. (MonadTransControl t, MonadAttempt m, Monad (t m))
+                   => (forall a. StT t a -> (StT t (), a))
+                   -> (forall a. (StT t (), a) -> StT t a)
+                   -> t m (Either f b)
+                   -> (f -> t m b)
+                   -> t m b
+defaultLiftAttempt extractState insertState act recover = do
+  initState <- captureT
+  result :: StT t b <- liftWith $ \ run ->
+    attempt (act' run ) $ recover' run initState
+  restoreT $ pure result
+    where
+      act' :: Run t -> m (Either f (StT t b))
+      act' run = extractState @(Either f b) <$> run act >>= \case
+        (st, Right b) -> pure . Right $ insertState (st, b)
+        (_ , Left  f) -> pure $ Left f
+
+      recover' :: Run t -> StT t () -> f -> m (StT t b)
+      recover' run initSt f = run $ restoreT (pure initSt) >>= (\ () -> recover f)
 
 -- So what we want:
 --

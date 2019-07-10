@@ -20,6 +20,7 @@ import Data.Bifoldable as P
 import Data.Bitraversable as P
 import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
+import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
 import Control.Newtype as P

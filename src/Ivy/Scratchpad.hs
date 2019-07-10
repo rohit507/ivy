@@ -19,14 +19,52 @@ import Ivy.Wrappers.IntMap (IntMap)
 import qualified Ivy.Wrappers.IntMap as IM
 import Ivy.Wrappers.IntSet (IntSet)
 import qualified Ivy.Wrappers.IntSet as IS
+import Ivy.Wrappers.IntGraph (IntGraph)
+import qualified Ivy.Wrappers.IntGraph as IG
 -- import qualified Data.IntMap as M
 -- import Data.TypeMap.Dynamic (TypeMap)
 -- import qualified Data.TypeMap.Dynamic as TM
 
-type IMap a b = IntMap b
+data Config = Conf {}
 
-data GraphState m = GraphState {
-     termData :: IMap TermID (TermState m)
+
+data State m = State {
+     termData :: IntMap ETermID (TermState m)
+   }
+
+newtype ETermID = ETID { getETID :: Int }
+
+instance Newtype ETermID Int where
+  pack = ETID
+  unpack = getETID
+
+newtype TermID t = TID { getTID :: Int}
+
+instance Newtype (TermID t) Int where
+  pack = TID
+  unpack = getTID
+
+
+-- | The unique state information we store for each term.
+data TermState m where
+  TermState :: {
+       termType :: TypeRep t
+     , termValue :: Maybe (t (Var t m))
+     , dirty :: Bool
+     } -> TermState m
+  Unified :: TypeRep t -> TermID t -> TermState m
+  Errored :: (MonadError e m) => e -> TermState m
+
+-- | Pure and Slow Transformer that allows for most of the neccesary binding
+--   operations.
+type IntBindT m = RWST Config () (State m) m
+
+
+-- TODO ::
+--    - Property tests
+--    - core implementation of unification
+--
+
       -- Consider converting to a typed map, at least early on.
       -- TODO :: Should we keep a graph of term relationships or something?
       --         That would hopefully let us minimize the number of terms we
@@ -105,23 +143,3 @@ data GraphState m = GraphState {
       --
       -- Boy oh boy :V and then once that's done we can focus on wrapping things
       -- up neatly. And preventing a lot of single level decomp
-   }
-
-type TermID = Int
-
-data TermState m where
-  TermState :: {
-       termType :: TypeRep t
-     , termValue :: Maybe (t (Var t m))
-     -- , termHook :: Maybe (Hook t m)
-     -- , termRelations :: () -- Map from a property to a link.
-     , dirty :: Bool -- Not sure if we should trigger hooks strictly or
-                    -- lazily.
-     } -> TermState m
-  Unified :: TermID -> TermState m
-  Errored :: (MonadError e m) => e -> TermState m
-
--- TODO ::
---    - Property tests
---    - core implementation of generically typed map
---    -
