@@ -29,6 +29,7 @@ dependencies:
   - data-reify
   - type-map
   - newtype
+  - algebraic-graphs
   - logging
 
 library:
