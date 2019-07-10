@@ -10,8 +10,6 @@ Portability : POSIX
 
 module Ivy.Prelude (
     module P
-  , (:=)(..)
-  , (::=)(..)
 ) where
 
 import Intro as P
@@ -26,7 +24,9 @@ import Data.Reify as P
 import Control.Monad.Free.Church as P
 
 import GHC.Exts as P (fromListN)
+import GHC.TypeLits as P
 
+{-
 import Data.Functor as B
 
 -- | This is a pair type meant mainly for syntax sugar, `key := val` is to be
@@ -67,3 +67,4 @@ instance Foldable f => Foldable ((::=) f) where
 
 instance Traversable f => Traversable ((::=) f) where
   sequenceA (a ::= b) = flip (::=) <$> sequenceA b <*> a
+-}

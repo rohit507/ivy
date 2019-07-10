@@ -11,202 +11,108 @@ Portability : POSIX
 
 module Ivy.Scratchpad where
 
+import Ivy.MonadClasses
 import Ivy.Prelude
-import Data.Functor.Contravariant
-import Control.Monad.Trans.Control
+import Data.IntMap (IntMap)
+-- import qualified Data.IntMap as M
+-- import Data.TypeMap.Dynamic (TypeMap)
+-- import qualified Data.TypeMap.Dynamic as TM
 
--- | This is a term variable expression which stores some arbitrary depth
---   term in t, where all leaf nodes are `v`s. This is isomorphic to `UTerm t v`
---   from `unification-fd` but with shorter constructors.
---
---   TODO :: Consider just making this a set of pattern synonyms over `UTerm`.
-data TV t v where
+type IMap a b = IntMap b
 
-  -- | This is the constructor for a term, we keep it short because people
-  --   will be using this rather a lot.
-  T :: {getT :: !(t (TV t v))} -> TV t v
+data GraphState m = GraphState {
+     termData :: IMap TermID (TermState m)
+      -- Consider converting to a typed map, at least early on.
+      -- TODO :: Should we keep a graph of term relationships or something?
+      --         That would hopefully let us minimize the number of terms we
+      --         update, and let us keep better track of subsumption, esp
+      --         when a cycle occurs and a sequence of terms should be unified.
+      --
+      --   - Okay so we get three graphs
+      --       - Basic dependency graph w/in a term type
+      --       - subsumption graph where cycle detection can lead to the
+      --         collapsing of term
+      --       - edge-labeled relationship graph which we can use to
+      --         project or inject rules when needed.
+      --
+      --   - What happens if we're strict w.r.t to hooks?
+      --       - well, we open ourselves up to infinite cycles or indefinite
+      --         expansion of the graph as rules trigger and re-trigger.
+      --   - What happens if we're lazy?
+      --       - we have to do more work to keep proper track of whether
+      --         we have cycles in chains of actions, and them resolve them
+      --         somehow.
+      --         - So let's walk through that : We have a <- b <- c <- a
+      --           we start when b changes and we run the relevant rules
+      --           if c is also dirty, then we run through those terms.
+      --           if a is dirty then we can run through its rules
+      --           well, then we hit b again.
+      --           - At which point we notice that b is practically dirty
+      --             and move through the relevant steps again.
+      --           - Of course, we could be co-inductive and assume that
+      --             b is clean and just run one iteration of the cycle.
+      --             - when we recurse back to that first call then we could
+      --               notice that b was in the set of operations we actually
+      --               leaned on our co-inductive assumption.
+      --             - And then what? if we notice that we have changed b
+      --               we rerun the process?
+      --             - well, we could put a counter down and limit the
+      --               number of cycles to some parameter?
+      --   - Of course laziness needs an additional assumption for it to
+      --     be correct which is that no rule will take a bottom and
+      --     turn it into something higher than bottom on the lattice.
+      -- Sigh :| i need to think about testing all this stuff, especially
+      -- ensuring that the partial order / lattice properties are well met.
+      -- Likewise, Testing the correctness of hooks would be super nice.
+      --
+      -- Hooks are going to be the hard part here, since we need to
+      -- basically do some silly continuation based stuff that
+      -- allows us to split and merge hooks.
+      --
+      -- So we need a bunch of specific properties for a hook:
+      --   it has a nominal breadth and height, where breadth is the number of
+      --   parallel actions composed into a single chain.
+      --   The height is number of remaining steps in the longest of those
+      --   actions.
+      --
+      -- We need to make sure that, unless an external bind is applied, then
+      -- we always reduce the number of steps remaining.
+      --
+      -- Thankfully, the hook layer should be pretty independent of the
+      -- attempt structure, especially when we can just keep an old state
+      -- hiding somewhere and swap it in when we mess up. Having that model
+      -- hopefully means we don't have to super picky (for now) about keeping
+      -- hooks revertible.
+      --
+      -- So Okay, what can these hooks do?
+      --    Unify / Subsume / Bind etc...
+      --    Watch for changes in a term, filter on some upwards
+      --       closed property
+      --    Spawn multiple parallel hooks
+      --    Ideally we would be able:
+      --        detect that trees are identical and keep from duplicating them
+      --        prune action trees that are unachiveable.
+      --    hold until a term is subsumed by another, hold until terms are
+      --    equal.
+      --
+      --    I guess there will also probably be some way to update a hook as
+      --    bindings change.
+      --
+      -- Boy oh boy :V and then once that's done we can focus on wrapping things
+      -- up neatly. And preventing a lot of single level decomp
+   }
 
-  -- | Constructor that holds a variable with some arbitrary phantom.
-  --   This is mostly for convenience so that one doesn't need to cast
-  --   values repeatedly.
-  V :: {getV :: !v} -> TV t v
+type TermID = Int
 
-class (Traversable t, Eq1 t, Hashable1 t) => Unifiable t  where
+data TermState m where
+  TermState :: {
+       termType :: TypeRep t
+     , termValue :: Maybe (t (Var t m))
+     -- , termHook :: Maybe (Hook t m)
+     -- , termRelations :: () -- Map from a property to a link.
+     , dirty :: Bool -- Not sure if we should trigger hooks strictly or
+                    -- lazily.
+     } -> TermState m
+  Unified :: TermID -> TermState m
 
-  -- | I like the model where we just create constraints that cover
-  --   various classes, and have one big'ol datatype to implement all
-  --   of the potential errors.
-  --
-  --   Therefore, you get this constraint family to tell us what constraints
-  --   an error should implement.
-  type UnificationErr t e :: Constraint
-
-  -- | Attempt to unify the following terms. A failure should return
-  --   `Left e` and a success should return a `Right _` where
-  --   any `Left (v,v)` will be further unified.
-  --
-  --   TODO :: Yeah, I know that latter type is getting to be a bit much
-  --          but it'll do for now. It's not clear that a new datatype
-  --          for this one use is actually useful.
-  --
-  --   TODO :: I should have a monad unify or something that just lets me
-  --          define how unification occours and otherwise can just
-  --          do it's thing.
-  unifyTerm :: (UnificationErr t e)
-            => t v -> t v
-            -> Either e (t (Either (v,v) v))
-
-
--- | This class is a somewhat modified version of
---   `Control.Unification.BindingMonad` from `unification-fd`. It
---   still performs structural unification, but with a few key differences:
---
---     1) It doesn't choke on cyclic terms.
---     2) Provides a rollback mechanism that can still return information
---        from reverted branches of execution.
---     3) Triggers hooks when terms are unified.
---
---   All of these properties are desired if we want to use unification
---   as a significant part of a synthesis process, or as an element in the
---   analysis of inherently cyclic term graphs.
---
---   Specifically, the rollback mechanism is meant to interact seamlessly
---   with query modes for modern SMT solvers. This mode allows you to
---   push and pop sets of constraints from a stack while preserving
---   any relevant learned clauses.
---
---   Note: We allow `m` to be of any kind because there's no real requirement it
---   be a monad or something. This interface explicitly chooses to not require
---   a way to extract m, since it could be a monad, a pure container, or
---   something else entirely.
---
---   Note: The operations `unify`, `equals`, `equiv`, and `subsume` /can/ all be
---   implemented in terms of the `*Var` operations, but in a number of
---   instances we will be able to get radical speedups by restricting `t`
---   and specializing those ops.
---
---   FIXME :: Having `Hook` as an associated type family in this class
---           renders the interface for hooks basically useless.
---           In a better world, we'd either:
---
---             1) Provide functions in this class that allow you to construct
---                a hook. (Good)
---
---             2) Standardize the structure of a hook so that it's just
---                a function of some sort. (Best)
-class (Unifiable t, Semigroup (Hook m))
-      => BindUpdate (m :: k) t | m -> t where
-
-  -- | This is an update that tells us how to modify a unification map.
-  --
-  --   The intention is that an implementer doesn't export `res` to
-  --   a user.
-  type Update m = (res :: Type -> Type) | res -> m
-
-  -- | This is a variable that has a unifiable term associated with it.
-  --   generally defined by `m` in one way other.
-  --
-  --   The intention here is that `Var m` type is hidden from users
-  --   such that they can only use the functions in this typeclass to
-  --   work with them.
-  type Var m :: Type
-
-  -- | The type of hooks for this type of unification map.
-  type Hook m :: Type
-
-  -- | Create a new free (unbound) variable.
-  freeVar :: Update m (Var m)
-
-  -- | Get the single layer term for some variable or `Nothing` if
-  --   the var is unbound.
-  lookupVar  :: Var m -> Update m (Maybe (t (Var m)))
-
-  -- | Binds a variable to some term, unifying it with any existing
-  --   term for that variable if needed.
-  bindVar :: Var m -> t (Var m) -> Update m ()
-
-  -- | Unifies two variables and their associated terms. If the
-  --   unification fails the transaction should be rolled back
-  --   and some error returned through whatever error mechanism
-  --   `Update m` uses.
-  unify :: Var m -> Var m -> Update m (Var m)
-
-  -- | Asserts that the first variable is <= the second.
-  subsumes :: Var m -> Var m -> Update m Bool
-
-  -- | Tells us whether two terms have been unified. Does not change
-  --   the state of the update, just return information.
-  equals :: Var m -> Var m -> Update m Bool
-
-  -- | Tells us whether the input terms are equivalent modulo renaming of
-  --   free variables. If they are, returns a set of unifications that
-  --   need to occur for both terms to be truly equivalent.
-  equiv :: Var m -> Var m -> Update m Bool
-
-  -- | Adds a single hook to the unification map. Semantically this should
-  --   use the semigroup instance of `Hook m` to merge the new hook with
-  --   all previous hooks.
-  --
-  --   A hook, whatever the exact form it takes, should be triggered whenever
-  --   there is a change to
-  addHook :: Hook m -> Var m -> Update m ()
-
-  -- | Returns the hook for some given variable.
-  getHook :: Var m -> Update m (Hook m)
-
-  -- | Given two updates, this produces a parallel merge of those two updates.
-  --   really, it's the implementation of this that determines the degree of
-  --   parallelism that's used as things update and actions are performed.
-  --
-  --   It's rather important that both updates use a split identifier space
-  --   otherwise the final merge action can have aliasing errors.
-  --
-  --   If `Update m` is a monad then this can be taken from `MonadParallel`.
-  merge    :: Update m a
-           -> Update m b
-           -> Update m (a,b)
-
-  -- | Try an update, if the action should be rolled back (returns a `Left f`)
-  --   then do so, and run the recovery function.
-  --
-  --   Keep in mind that the f here isn't actually an error per-se, just
-  --   some knowledge that has been gained from the rolled back computation.
-  --   Say if you're doing CDCL `f` would be the newly learned conflict clause.
-  --
-  --   An uncaught error in the initial action should rollback the state to
-  --   the start of the action and then allow the error to continue propagating
-  --   upward, without running the recovery action.
-  --
-  --   TODO :: Hmm, stacking additional monad transformer on top of this
-  --          should be doable if they have @MonadTransControl@ instances.
-  --          But hoo boy, I've got no idea how to do that in a way that
-  --          preserves semantics.
-  attempt :: Update m (Either f b) -> (f -> Update m b) -> Update m b
-
-  -- | Combine one update which happens after another into a single
-  --   (hopefully somehow compressed or minimized) update. This is probably
-  --   just a bind of some sort if `Update m` is a monad.
-  sequence :: Update m a -> (a -> Update m b) -> Update m b
-
--- TODO ::I intend to wrap this core interface to create an interface that
---       allows working with terms of many different types in parallel.
---       That way we can provide some solid foundation for layering
---       analysis over each other, having analysis that can interact
---       with monads above and below this on the stack.
---
-
--- Wait, this works badly with hooks since those triggering will themselves
--- fiddle with the system.
---
--- Well, it depends on the idempotence and general properties of unification.
--- If everything stays nice and upwards closed
-data VarData h t v
-  = Base { term :: t v, newSubs :: [v], newHooks :: [h], updated :: [v] }
-  | Merged v
-
--- generator will probably be from concurrent-supply
--- ideally a vardata can be implicitly transformed into an m -> m
---
--- The hard part here is hooks, since those are dependent on what hooks
--- are given us with the m.
--- data Upd generator m = UPD (generator -> VarData h t v)
+-- Now onto impementation of whatever the fuck this is.

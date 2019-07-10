@@ -27,6 +27,7 @@ dependencies:
   - constraints
   - recursion-schemes
   - data-reify
+  - type-map
   - logging
 
 library:
