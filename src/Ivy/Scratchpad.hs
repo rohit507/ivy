@@ -13,7 +13,12 @@ module Ivy.Scratchpad where
 
 import Ivy.MonadClasses
 import Ivy.Prelude
-import Data.IntMap (IntMap)
+import Control.Lens
+import Control.Lens.TH
+import Ivy.Wrappers.IntMap (IntMap)
+import qualified Ivy.Wrappers.IntMap as IM
+import Ivy.Wrappers.IntSet (IntSet)
+import qualified Ivy.Wrappers.IntSet as IS
 -- import qualified Data.IntMap as M
 -- import Data.TypeMap.Dynamic (TypeMap)
 -- import qualified Data.TypeMap.Dynamic as TM
@@ -114,5 +119,9 @@ data TermState m where
                     -- lazily.
      } -> TermState m
   Unified :: TermID -> TermState m
+  Errored :: (MonadError e m) => e -> TermState m
 
--- Now onto impementation of whatever the fuck this is.
+-- TODO ::
+--    - Property tests
+--    - core implementation of generically typed map
+--    -

@@ -50,6 +50,18 @@ class MonadBind t m => MonadUnify t m  where
   --   the state of the update, just return information.
   equals :: (Unifiable e t, MonadError e m) => t (Var m t) -> t (Var m t) -> m Bool
 
+  -- TODO :: I'm not confident that we want an equiv operation since
+  --        that may break the upwards closed nature of our various operations
+  --        It's kinda unclear.
+  --
+  --   Hell it isn't even clear that the core binding operations need
+  --   to be upwards closed in some fashion.
+  --
+  --   Tells us whether the input terms are equivalent modulo renaming of
+  --   free variables. If they are, returns a set of unifications that
+  --   need to occur for both terms to be truly equivalent.
+  --   equiv :: Var m t -> Var m t -> m (Maybe [(Var m t, Var m t)])
+
 -- | A property is a many-to-one relationship between two terms of potentially
 --   different types.
 class Property p t t' | p -> t, p -> t'
@@ -105,10 +117,6 @@ class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
   -- | Asserts that the first variable is <= the second.
   subsumes :: Var m t -> Var m t -> m Bool
 
-  -- | Tells us whether the input terms are equivalent modulo renaming of
-  --   free variables. If they are, returns a set of unifications that
-  --   need to occur for both terms to be truly equivalent.
-  equiv :: Var m t -> Var m t -> m (Maybe [(Var m t, Var m t)])
 
 
 -- | A class for monads that can attempt a computation and if that computation
@@ -123,6 +131,7 @@ class MonadAttempt m where
   --   E.g. if you're doing CDCL `f` could be a newly learned conflict clause.
   attempt :: m (Either f b) -> (f -> m b) -> m b
 
+class (MonadSubsume t m)
 
 
 -- So what we want:
