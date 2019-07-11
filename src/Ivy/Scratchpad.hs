@@ -90,11 +90,10 @@ data BindingState m = BindingState {
      _termData :: IntMap ETermID (TermState m)
    }
 
-
 type BoundStateIB t m = BoundState t (IntBindT m)
 
 -- | The state for a bound term, with type information.
-data BoundState t m = BTS {
+data BoundState t m = BoundState {
        _termValue :: Maybe (t (Var t m))
      -- | Relations from this term to other terms
      , _relations :: TypeMap (RelMap m)
@@ -116,7 +115,7 @@ data TermState m where
 
 -- | The state of a newly inserted free term.
 freeVarState :: proxy t -> BoundState t m
-freeVarState = BTS {
+freeVarState _ = BoundState {
     _termValue = Nothing
   , _relations = TM.empty
   , _forwardedFrom = IS.empty
@@ -140,13 +139,13 @@ crushVID = pack . unpack
 unsafeExpandVID :: TermID t -> VarID t m
 unsafeExpandVID = pack . unpack
 
+type IBRWST m = RWST (Context      (IntBindT m))
+                     (Assumptions  (IntBindT m))
+                     (BindingState (IntBindT m))
+
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
-newtype IntBindT m a = IntBindT {
-  getIBT :: RWST (Context       (IntBindT m))
-                 (Assumptions  (IntBindT m))
-                 (BindingState (IntBindT m)) m a
-  }
+newtype IntBindT m a = IntBindT { getIBT :: IBRWST m m a}
 
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
@@ -158,9 +157,22 @@ instance MonadTrans IntBindT where
   lift :: (Monad m) => m a -> IntBindT m a
   lift = IntBindT . lift
 
+-- NOTE :: We should be able to show that (forall m. Coercible (IBRWST m) (IBRWST Identity))
+
+
+-- | This is a straightforward enough instance except where we rely on the
+--   fact that `m` is a phantom variable in all of our output and state.
+--
 instance MonadTransControl IntBindT where
 
-  type StT IntBindT a
+  type StT IntBindT a = StT (IBRWST Identity) a
+
+  liftWith = \f -> IntBindT $ liftWith $ \run -> f $ run . getIBT
+
+  restoreT = IntBindT . restoreT
+
+
+-- | Huh, can we parameterize IntBindT
 
 -- | Keep from having to repeatedly
 type VarIB t m = Var t (IntBindT m)
@@ -171,7 +183,7 @@ instance ( Typeable t
          , MonadError e m
          ) => MonadBind t (IntBindT m) where
 
-  type Var t (IntBindT m) = VarID t (IntBindT m)
+  type Var t = VarID t
 
   freeVar :: (MonadError e (IntBindT m), Unifiable e t)
     => proxy t -> IntBindT m (VarIB t m)

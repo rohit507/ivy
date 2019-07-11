@@ -33,9 +33,27 @@ instance Newtype (TermID t) Int where
   pack = TID
   unpack = getTID
 
+type TID = TermID
+
 -- | an identifier for a specific term.
 newtype VarID t m = VID { getVID :: Int}
 
 instance Newtype (VarID t m) Int where
   pack = VID
   unpack = getVID
+
+-- | Strip type information from a TermID
+crushTID :: TermID t -> ETermID
+crushTID = pack . unpack
+
+-- | Add (potentially incorrect) type information to am ETID
+unsafeExpandTID :: ETermID -> TermID t
+unsafeExpandTID = pack . unpack
+
+-- | Strip Monad information from a VerID
+crushVID :: VarID t m -> TermID t
+crushVID = pack . unpack
+
+-- | Add (potentially incorrect) monad information to a VID
+unsafeExpandVID :: TermID t -> VarID t m
+unsafeExpandVID = pack . unpack

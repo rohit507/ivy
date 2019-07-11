@@ -13,6 +13,7 @@ Portability : POSIX
 module Ivy.MonadClasses where
 
 import Ivy.Prelude
+import Algebra.Lattice
 
 -- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It
@@ -39,6 +40,7 @@ import Ivy.Prelude
 --            I suspect it would be faster to build, but not as simple
 --            to manipulate.
 
+type Unifiable e t = JoinSemiLattice1 e t
 
 -- | This monad gives you the ability to unify terms in some unifiable language.
 class MonadBind t m => MonadUnify t m  where
@@ -97,7 +99,7 @@ class Unifiable e t where
 class MonadBind t m where
 
   -- | This is a variable that has a unifiable term associated with it.
-  type Var t m = r | r -> t m
+  type Var t = (r :: (Type -> Type) -> Type) | r -> t
 
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
