@@ -139,9 +139,9 @@ crushVID = pack . unpack
 unsafeExpandVID :: TermID t -> VarID t m
 unsafeExpandVID = pack . unpack
 
-type IBRWST c m = RWST (Context    c)
-                      (Assumptions  c)
-                      (BindingState c)
+type IBRWST c = RWST (Context      c)
+                     (Assumptions  c)
+                     (BindingState c)
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
@@ -157,10 +157,12 @@ instance MonadTrans IntBindT where
   lift :: (Monad m) => m a -> IntBindT m a
   lift = IntBindT . lift
 
+-- I guess this means that we're wrapping them in some existentials and
+-- hoping we pull the correct ones out?
 
 -- | This is a straightforward enough instance except where we rely on the
 --   fact that `m` is a phantom variable in all of our output and state.
-instance MonadTransControl IntBindT where
+
 
   -- | Help :( if I can't get callback to flow through this layer then
   --   a lot of IO interactions will fail or be super tedious.
