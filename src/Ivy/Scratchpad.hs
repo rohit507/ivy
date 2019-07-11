@@ -1,5 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE UndecidableInstances #-}
+{---# LANGUAGE UndecidableInstances #-}
 {-|
 Module      : Ivy.Scratchpad
 Description : Random scratch work goes here until it's moved
@@ -18,6 +18,7 @@ import Control.Lens hiding (Context)
 import Control.Lens.TH
 
 import Ivy.Wrappers.IDs
+import Ivy.GeneralError
 
 import Ivy.Wrappers.IntMap (IntMap)
 import qualified Ivy.Wrappers.IntMap as IM
@@ -44,7 +45,7 @@ type instance TM.Item RelMap t = HashMap t ETID
 -- | Reader Monad Info
 data Context m = Context {
     _conf :: Config m
-  , _assumes :: Assumptions m
+  , _assumes :: Assumptions
   }
 
 
@@ -74,7 +75,7 @@ data Config m = Config {
 --
 --   In the writer slot, this allows for one to get those assumptions which
 --   were hit when this process happened.
-data Assumptions m = Assumptions {
+data Assumptions = Assumptions {
     -- | Assumption that a pair of terms are unified.
     _unified :: HashSet (ETID,ETID)
     -- | Assumption that some pair of terms is structurally equal, without
@@ -85,9 +86,9 @@ data Assumptions m = Assumptions {
   }
 
 -- | Runtime state of our term-graph thing.
-data BindingState m = BindingState {
+data BindingState = BindingState {
      -- | Term Specific Information.
-     _termData :: IntMap ETermID (TermState m)
+     _termData :: IntMap ETermID TermState
    }
 
 type BoundStateIB t m = BoundState t (IntBindT m)
@@ -105,13 +106,11 @@ data BoundState t m = BoundState {
      , _dirty :: !Bool
      }
 
-type TermStateIB m = TermState (IntBindT m)
-
 -- | The unique state information we store for each term.
-data TermState m where
-  Bound     :: TypeRep t -> BoundState t m -> TermState m
-  Forwarded :: TypeRep t -> TermID t -> TermState m
-  Errored   :: (MonadError e m) => TypeRep t -> e -> TermState m
+data TermState where
+  Bound     :: TypeRep t -> TypeRep m -> BoundState t m -> TermState
+  Forwarded :: TypeRep t -> TypeRep m -> TermID t -> TermState
+  Errored   :: (MonadError e m) => TypeRep t -> TypeRep m -> e -> TermState
 
 -- | The state of a newly inserted free term.
 freeVarState :: proxy t -> BoundState t m
@@ -139,9 +138,7 @@ crushVID = pack . unpack
 unsafeExpandVID :: TermID t -> VarID t m
 unsafeExpandVID = pack . unpack
 
-type IBRWST c = RWST (Context      c)
-                     (Assumptions  c)
-                     (BindingState c)
+type IBRWST c = RWST (Context      c) Assumptions BindingState
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
@@ -157,41 +154,13 @@ instance MonadTrans IntBindT where
   lift :: (Monad m) => m a -> IntBindT m a
   lift = IntBindT . lift
 
--- I guess this means that we're wrapping them in some existentials and
--- hoping we pull the correct ones out?
+instance MonadTransControl IntBindT where
 
--- | This is a straightforward enough instance except where we rely on the
---   fact that `m` is a phantom variable in all of our output and state.
+  type StT IntBindT a = (a, BindingState, Assumptions)
 
+  liftWith f = defaultLiftWith IntBindT getIBT
 
-  -- | Help :( if I can't get callback to flow through this layer then
-  --   a lot of IO interactions will fail or be super tedious.
-{-
-  type StT IntBindT a = (a, EBindingState, EAssumptions)
-
-  liftWith f = RWST $ \r s -> liftM (\x -> (x, s, mempty))
-                                      (f $ \t -> runRWST t r s)
-  restoreT mSt = RWST $ \_ _ -> mSt
-
-instance Monoid w => MonadTransControl (RWST r w s) where
-    type StT (RWST r w s) a = (a, s, w)
-    liftWith f = RWST $ \r s -> liftM (\x -> (x, s, mempty))
-                                      (f $ \t -> runRWST t r s)
-    restoreT mSt = RWST $ \_ _ -> mSt
-    {-# INLINABLE liftWith #-}
-    {-# INLINABLE restoreT #-}
-
-instance Monoid w => MonadTransControl (Strict.RWST r w s) where
-    type StT (Strict.RWST r w s) a = (a, s, w)
-    liftWith f =
-        Strict.RWST $ \r s -> liftM (\x -> (x, s, mempty))
-                                    (f $ \t -> Strict.runRWST t r s)
-    restoreT mSt = Strict.RWST $ \_ _ -> mSt
-    {-# INLINABLE liftWith #-}
-    {-# INLINABLE restoreT #-}
--}
-
--- | Huh, can we parameterize IntBindT
+  restoreT mSt = defaultRestoreT IntBindT
 
 -- | Keep from having to repeatedly
 type VarIB t m = Var t (IntBindT m)
@@ -232,20 +201,9 @@ newIdent = IBT $ undefined
 
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
-getTermState :: VarIB t m -> IntBindT m (TermStateIB m)
+getTermState :: VarIB t m -> IntBindT m TermState
 getTermState = undefined
 
--- | A context for an error modifies an error to add additional metadata.
-type ErrorContext e = e -> e
-
--- | Errors that are internal to our current library and are not due to
---   user error.
-class InternalError e m where
-  invalidTypeFound :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
-  gettingTermStateFor :: (Typeable t) => Var t m -> ErrorContext e
-  gettingTerminalVarVor :: (Typeable t) => Var t m -> ErrorContext e
-
-type InternalErr = InternalError
 
 -- | Potentially gets a termState for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
