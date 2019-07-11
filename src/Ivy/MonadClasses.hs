@@ -40,17 +40,16 @@ import Algebra.Lattice
 --            I suspect it would be faster to build, but not as simple
 --            to manipulate.
 
-type Unifiable e t = JoinSemiLattice1 e t
 
 -- | This monad gives you the ability to unify terms in some unifiable language.
 class MonadBind t m => MonadUnify t m  where
 
   -- | This allows you to unify terms in your given context.
-  unify :: (Unifiable e t, MonadError e m) => Var t m -> Var t m -> m (Var t m)
+  unify :: (JoinSemiLattice1 e t, MonadError e m) => Var t m -> Var t m -> m (Var t m)
 
   -- | Tells us whether two terms have been unified. Does not change
   --   the state of the update, just return information.
-  equals :: (Unifiable e t, MonadError e m) => Var t m -> Var t m -> m Bool
+  equals :: (JoinSemiLattice1 e t, MonadError e m) => Var t m -> Var t m -> m Bool
 
   -- TODO :: I'm not confident that we want an equiv operation since
   --        that may break the upwards closed nature of our various operations
@@ -104,15 +103,15 @@ class MonadBind t m where
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
   --   requiring a whole pile of extra effort.
-  freeVar :: (MonadError e m, Unifiable e t) => proxy t -> m (Var t m)
+  freeVar :: (MonadError e m, JoinSemiLattice1 e t) => proxy t -> m (Var t m)
 
   -- | Get the single layer term for some variable or `Nothing` if
   --   the var is unbound.
-  lookupVar  :: (MonadError e m, Unifiable e t) => Var t m -> m (Maybe (t (Var t m)))
+  lookupVar  :: (MonadError e m, JoinSemiLattice1 e t) => Var t m -> m (Maybe (t (Var t m)))
 
   -- | Binds a variable to some term, overwriting any existing term for that
   --   variable if needed.
-  bindVar :: (MonadError e m, Unifiable e t) => Var t m -> t (Var t m) -> m (Var t m)
+  bindVar :: (MonadError e m, JoinSemiLattice1 e t) => Var t m -> t (Var t m) -> m (Var t m)
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 

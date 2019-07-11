@@ -19,6 +19,7 @@ import Ivy.Prelude
 
 -- | A termID without knowledge about the type of its term.
 newtype ETermID = ETID { getETID :: Int }
+  deriving (Eq, Ord, Show, Generic, Hashable)
 type ETID = ETermID
 
 
@@ -28,6 +29,7 @@ instance Newtype ETermID Int where
 
 -- | an identifier for a specific term.
 newtype TermID t = TID { getTID :: Int }
+  deriving (Eq, Ord, Show, Generic, Hashable)
 
 instance Newtype (TermID t) Int where
   pack = TID
@@ -37,6 +39,7 @@ type TID = TermID
 
 -- | an identifier for a specific term.
 newtype VarID t m = VID { getVID :: Int}
+  deriving (Eq, Ord, Show, Generic, Hashable)
 
 instance Newtype (VarID t m) Int where
   pack = VID
@@ -53,6 +56,9 @@ unsafeExpandTID = pack . unpack
 -- | Strip Monad information from a VerID
 crushVID :: VarID t m -> TermID t
 crushVID = pack . unpack
+
+flattenVID :: VarID t m -> ETID
+flattenVID = crushTID . crushVID
 
 -- | Add (potentially incorrect) monad information to a VID
 unsafeExpandVID :: TermID t -> VarID t m
