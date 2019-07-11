@@ -38,8 +38,8 @@ import qualified Data.HashSet as HS
 -- import qualified Data.TypeMap.Dynamic as TM
 
 -- | Uninhabited type we use for our Item family.
-data RelMap m
-type instance TM.Item (RelMap m) t = HashMap t ETID
+data RelMap
+type instance TM.Item RelMap t = HashMap t ETID
 
 -- | Reader Monad Info
 data Context m = Context {
@@ -94,13 +94,13 @@ type BoundStateIB t m = BoundState t (IntBindT m)
 
 -- | The state for a bound term, with type information.
 data BoundState t m = BoundState {
-       _termValue :: Maybe (t (Var t m))
+       _termValue :: Maybe (t (VarIB t m))
      -- | Relations from this term to other terms
-     , _relations :: TypeMap (RelMap m)
+     , _relations :: TypeMap RelMap
      -- | Terms that ultimately point to this term
-     , _forwardedFrom :: IntSet (Var t m)
+     , _forwardedFrom :: IntSet (VarIB t m)
      -- | What terms does this one subsume?
-     , _subsumedTerms :: IntSet (Var t m)
+     , _subsumedTerms :: IntSet (VarIB t m)
      -- | Has this term been changed and not had any of its hooks run.
      , _dirty :: !Bool
      }
@@ -139,13 +139,13 @@ crushVID = pack . unpack
 unsafeExpandVID :: TermID t -> VarID t m
 unsafeExpandVID = pack . unpack
 
-type IBRWST m = RWST (Context      (IntBindT m))
-                     (Assumptions  (IntBindT m))
-                     (BindingState (IntBindT m))
+type IBRWST c m = RWST (Context    c)
+                      (Assumptions  c)
+                      (BindingState c)
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
-newtype IntBindT m a = IntBindT { getIBT :: IBRWST m m a}
+newtype IntBindT m a = IntBindT { getIBT :: IBRWST (IntBindT m) m a}
 
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
@@ -157,20 +157,37 @@ instance MonadTrans IntBindT where
   lift :: (Monad m) => m a -> IntBindT m a
   lift = IntBindT . lift
 
--- NOTE :: We should be able to show that (forall m. Coercible (IBRWST m) (IBRWST Identity))
-
 
 -- | This is a straightforward enough instance except where we rely on the
 --   fact that `m` is a phantom variable in all of our output and state.
---
 instance MonadTransControl IntBindT where
 
-  type StT IntBindT a = StT (IBRWST Identity) a
+  -- | Help :( if I can't get callback to flow through this layer then
+  --   a lot of IO interactions will fail or be super tedious.
+{-
+  type StT IntBindT a = (a, EBindingState, EAssumptions)
 
-  liftWith = \f -> IntBindT $ liftWith $ \run -> f $ run . getIBT
+  liftWith f = RWST $ \r s -> liftM (\x -> (x, s, mempty))
+                                      (f $ \t -> runRWST t r s)
+  restoreT mSt = RWST $ \_ _ -> mSt
 
-  restoreT = IntBindT . restoreT
+instance Monoid w => MonadTransControl (RWST r w s) where
+    type StT (RWST r w s) a = (a, s, w)
+    liftWith f = RWST $ \r s -> liftM (\x -> (x, s, mempty))
+                                      (f $ \t -> runRWST t r s)
+    restoreT mSt = RWST $ \_ _ -> mSt
+    {-# INLINABLE liftWith #-}
+    {-# INLINABLE restoreT #-}
 
+instance Monoid w => MonadTransControl (Strict.RWST r w s) where
+    type StT (Strict.RWST r w s) a = (a, s, w)
+    liftWith f =
+        Strict.RWST $ \r s -> liftM (\x -> (x, s, mempty))
+                                    (f $ \t -> Strict.runRWST t r s)
+    restoreT mSt = Strict.RWST $ \_ _ -> mSt
+    {-# INLINABLE liftWith #-}
+    {-# INLINABLE restoreT #-}
+-}
 
 -- | Huh, can we parameterize IntBindT
 
