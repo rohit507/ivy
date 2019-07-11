@@ -77,7 +77,7 @@ class MonadProperty p m where
   propertyOf :: (Property p t t', MonadBind t m, MonadBind t' m)
              => p -> Var m t -> m (Var m t')
 
-
+{-
 -- | Lets you define how unification works for some specific type of term.
 --
 --   Ideally this would either be some JoinSemiLattice or the fixed point of a
@@ -91,6 +91,7 @@ class Unifiable e t where
    --           in particular unifiable e t should be structurally equivalent to
    --           JoinSem iLattice1 e t.
    unifyTerm :: (MonadError e m, MonadUnify t m) => t v -> t v -> m (t v)
+-}
 
 -- | Monads that allow you to bind variables to terms.
 class MonadBind t m where
@@ -114,7 +115,7 @@ class MonadBind t m where
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
   -- | Asserts that the first var subsumes the second.
-  subsume :: Var t m -> Var t m -> m Bool
+  subsume :: Var t m -> Var t m -> m ()
 
   -- | Asks whether the first variable is <= the second
   subsumes :: Var t m -> Var t m -> m Bool
@@ -151,6 +152,8 @@ class (Monad m) => MonadAttempt m where
 --   the error may well be missing due to rolling things back, but at least
 --   you're in a coherent state of some sort that you might be able to
 --   recover from.
+--
+--   NOTE :: If you disagree with the above, I'd be happy to listen to why.
 defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
                                       MonadAttempt m,
                                       Monad (t m),
@@ -167,14 +170,17 @@ defaultLiftAttempt extractState insertState act recover = do
     attempt (act' run) $ recover' run initState
   restoreT $ pure result
     where
+
+      -- | We wrap our action in a catchError block so that we can well,
+      --   catch the errors.
       wAct :: t m (Either (Either e f) b)
       wAct = catchError (first Right <$> act) (pure . Left . Left)
 
 
       act' :: Run t -> m (Either (Either e f) (StT t b))
-      act' run = extractState <$> (run @_  @(Either (Either e f) b) wAct) >>= \case
-        (st, Right b) -> pure . Right $ insertState (st, b :: b)
-        (_ , Left  f) -> pure $ Left  f
+      act' run = extractState <$> (run @_  @(Either (Either e f) b) wAct) >>= pure . \case
+        (st, Right b) -> Right $ insertState (st, b :: b)
+        (_ , Left  f) -> Left  f
 
       recover' :: Run t -> StT t () -> Either e f -> m (StT t b)
       recover' run initSt f

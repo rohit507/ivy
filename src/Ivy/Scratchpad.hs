@@ -1,4 +1,5 @@
-{---# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-|
 Module      : Ivy.Scratchpad
 Description : Random scratch work goes here until it's moved
@@ -12,9 +13,12 @@ Portability : POSIX
 module Ivy.Scratchpad where
 
 import Ivy.MonadClasses
-import Ivy.Prelude
-import Control.Lens
+import Ivy.Prelude hiding (IntSet, IntMap)
+import Control.Lens hiding (Context)
 import Control.Lens.TH
+
+import Ivy.Wrappers.IDs
+
 import Ivy.Wrappers.IntMap (IntMap)
 import qualified Ivy.Wrappers.IntMap as IM
 import Ivy.Wrappers.IntSet (IntSet)
@@ -35,13 +39,14 @@ import qualified Data.HashSet as HS
 
 -- | Uninhabited type we use for our Item family.
 data RelMap m
-type instance Item (RelMap m) t = HashMap t ETID
+type instance TM.Item (RelMap m) t = HashMap t ETID
 
 -- | Reader Monad Info
 data Context m = Context {
-    _config :: Config m
-  , _assumptions :: Assumptions m
+    _conf :: Config m
+  , _assumes :: Assumptions m
   }
+
 
 -- | General config info that only needs to be set once.
 data Config m = Config {
@@ -57,6 +62,7 @@ data Config m = Config {
     --   because that seems like we're asking too much.
   , _generateNewID :: m Int
   }
+
 
 -- | A set of assumptions about the term-graph that were either made or
 --   relied upon. We use this to properly handle cyclic terms and co-inductive
@@ -79,31 +85,11 @@ data Assumptions m = Assumptions {
   }
 
 -- | Runtime state of our term-graph thing.
-data State m = State {
+data BindingState m = BindingState {
      -- | Term Specific Information.
      _termData :: IntMap ETermID (TermState m)
    }
 
--- | A termID without knowledge about the type of its term.
-newtype ETermID = ETID { getETID :: Int }
-
-instance Newtype ETermID Int where
-  pack = ETID
-  unpack = getETID
-
--- | an identifier for a specific term.
-newtype TermID t = TID { getTID :: Int }
-
-instance Newtype (TermID t) Int where
-  pack = TID typeRef
-  unpack = getTID
-
--- | an identifier for a specific term.
-newtype VarID t m = VID { getVID :: Int}
-
-instance Newtype (VarID t m) Int where
-  pack = VID
-  unpack = getVID
 
 type BoundStateIB t m = BoundState t (IntBindT m)
 
@@ -129,13 +115,12 @@ data TermState m where
   Errored   :: (MonadError e m) => TypeRep t -> e -> TermState m
 
 -- | The state of a newly inserted free term.
-initialTermState :: proxy t -> TermState m
-initialTermState = TermState {
-    _termType = typeRep @t
-  , _termValue = Nothing
+freeVarState :: proxy t -> BoundState t m
+freeVarState = BTS {
+    _termValue = Nothing
   , _relations = TM.empty
   , _forwardedFrom = IS.empty
-
+  , _subsumedTerms = IS.empty
   , _dirty = True
   }
 
@@ -157,11 +142,25 @@ unsafeExpandVID = pack . unpack
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
-newtype IntBindT m = IBT {
-  getIBT :: RWST (Context (IntBintT m))
-                 (Assumptions (IntBindT m))
-                 (State (IntBindT m)) m
+newtype IntBindT m a = IntBindT {
+  getIBT :: RWST (Context       (IntBindT m))
+                 (Assumptions  (IntBindT m))
+                 (BindingState (IntBindT m)) m a
   }
+
+deriving newtype instance (Functor m) => Functor (IntBindT m)
+deriving newtype instance (Monad m) => Applicative (IntBindT m)
+deriving newtype instance (Monad m) => Monad (IntBindT m)
+deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
+
+instance MonadTrans IntBindT where
+
+  lift :: (Monad m) => m a -> IntBindT m a
+  lift = IntBindT . lift
+
+instance MonadTransControl IntBindT where
+
+  type StT IntBindT a
 
 -- | Keep from having to repeatedly
 type VarIB t m = Var t (IntBindT m)
@@ -195,8 +194,10 @@ instance ( Typeable t
        -- move relation
 
 -- | Generate a new internal identifier of some type.
-newIdent :: forall i. (Newtype i Int) => IntBindT m i
-newIdent = undefined
+--
+--   First type parameter is the output ident type.
+newIdent :: forall i m. (Newtype i Int) => IntBindT m i
+newIdent = IBT $ undefined
 
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
@@ -204,14 +205,16 @@ getTermState :: VarIB t m -> IntBindT m (TermStateIB m)
 getTermState = undefined
 
 -- | A context for an error modifies an error to add additional metadata.
-type Context e = e -> e
+type ErrorContext e = e -> e
 
 -- | Errors that are internal to our current library and are not due to
 --   user error.
-class InternalErr e m where
+class InternalError e m where
   invalidTypeFound :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
-  gettingTermStateFor :: (Typeable t) => Var t m -> Context e
-  gettingTerminalVarVor :: (Typeable t) => Var t m -> Context e
+  gettingTermStateFor :: (Typeable t) => Var t m -> ErrorContext e
+  gettingTerminalVarVor :: (Typeable t) => Var t m -> ErrorContext e
+
+type InternalErr = InternalError
 
 -- | Potentially gets a termState for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
@@ -309,10 +312,17 @@ instance (Typeable p, Typeable m) => MonadProperty p (IntBindT m) where
 instance MonadAttempt (IntBindT m) where
 
   attempt :: IntBindT m (Either f b) -> (f -> IntBindT m b) -> IntBindT m b
-  attempt = defaultLiftAttempt (\ (s,a) -> ((s, ()), a)) (\ ((s, ()), a) -> (s, a)
+  attempt = defaultLiftAttempt
+              (\ (s,a) -> ((s, ()), a))
+              (\ ((s, ()), a) -> (s, a))
 
 
-
+makeClassy ''Context
+makeClassy ''Config
+makeClassy ''Assumptions
+makeClassy ''BindingState
+makeClassy ''BoundState
+makeClassy ''TermState
 -- TODO ::
 --    - Property tests
 --    - core implementation of unification

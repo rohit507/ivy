@@ -1,4 +1,3 @@
-
 {---# LANGUAGE AllowAmbiguousTypes #-}
 {-|
 Module      : Ivy.Scratchpad
@@ -12,7 +11,10 @@ Portability : POSIX
 
 module Ivy.Wrappers.IntSet where
 
-import Ivy.Prelude
+import Ivy.Prelude hiding (IntSet)
 import qualified Data.IntSet as IS
 
 newtype IntSet v = IMW { getIntSet :: IS.IntSet }
+
+empty :: Newtype i Int => IntSet i
+empty = IMW IS.empty
