@@ -40,16 +40,18 @@ import Algebra.Lattice
 --            I suspect it would be faster to build, but not as simple
 --            to manipulate.
 
+type Term e t = (Typeable t, JoinSemiLattice1 e t)
+type IBM e m = (MonadError e m, InternalError e, Typeable m, Typeable e)
 
 -- | This monad gives you the ability to unify terms in some unifiable language.
 class MonadBind t m => MonadUnify t m  where
 
   -- | This allows you to unify terms in your given context.
-  unify :: (JoinSemiLattice1 e t, MonadError e m) => Var t m -> Var t m -> m (Var t m)
+  unify :: (Term e t, IBM e m) => Var t m -> Var t m -> m (Var t m)
 
   -- | Tells us whether two terms have been unified. Does not change
   --   the state of the update, just return information.
-  equals :: (JoinSemiLattice1 e t, MonadError e m) => Var t m -> Var t m -> m Bool
+  equals :: (Term e t, IBM e m) => Var t m -> Var t m -> m Bool
 
   -- TODO :: I'm not confident that we want an equiv operation since
   --        that may break the upwards closed nature of our various operations
@@ -103,15 +105,15 @@ class MonadBind t m where
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
   --   requiring a whole pile of extra effort.
-  freeVar :: (MonadError e m, JoinSemiLattice1 e t) => proxy t -> m (Var t m)
+  freeVar :: (IBM e m, Term e t) => proxy t -> m (Var t m)
 
   -- | Get the single layer term for some variable or `Nothing` if
   --   the var is unbound.
-  lookupVar  :: (MonadError e m, JoinSemiLattice1 e t) => Var t m -> m (Maybe (t (Var t m)))
+  lookupVar  :: (IBM e m, Term e t) => Var t m -> m (Maybe (t (Var t m)))
 
   -- | Binds a variable to some term, overwriting any existing term for that
   --   variable if needed.
-  bindVar :: (MonadError e m, JoinSemiLattice1 e t) => Var t m -> t (Var t m) -> m (Var t m)
+  bindVar :: (IBM e m, Term e t) => Var t m -> t (Var t m) -> m (Var t m)
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
@@ -189,16 +191,14 @@ defaultLiftAttempt extractState insertState act recover = do
             (Left e) -> throwError e
             (Right f') -> recover f')
 
+-- | A context for an error modifies an error to add additional metadata.
+type ErrorContext e = e -> e
 
--- So what we want:
---
---    Term Graph w/ vertices in a language and relations to terms in multiple
---    related languages.
---
---    newVar :: m (Vert t m)
---
---    The ability to attempt a computation and then rewind state if/when there's
---    an issue.
---
---    Define unification rules for each type of term in the language
---    Define hooks that trigger when the definition of a term is updated
+-- | Errors that are internal to our current library and are not due to
+--   user error.
+class InternalError e where
+  invalidTypeFound :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
+  nonexistentTerm :: (Typeable t, Typeable m) => Var t m -> e
+  gettingTermStateFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e
+  settingTermStateFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e
+  gettingTerminalVarFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e

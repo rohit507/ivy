@@ -147,11 +147,6 @@ instance (Monad m) => MonadState BindingState (IntBindT m)
 
 instance (Monad m) => MonadReader Context (IntBindT m)
 
-
-
-type Term e t = (Typeable t, JoinSemiLattice1 e t)
-type IBM e m = (MonadError e m, InternalError e, Typeable m, Typeable e)
-
 instance MonadTrans IntBindT where
 
   lift :: (Monad m) => m a -> IntBindT m a
@@ -175,12 +170,14 @@ instance ( Typeable t
 
   type Var t = VarID t
 
-  freeVar :: (MonadError e (IntBindT m), Term e t)
+  freeVar :: forall t m e proxy.  (MonadError e (IntBindT m), Term e t)
     => proxy t -> IntBindT m (VarIB t m)
-  freeVar = undefined
+  freeVar _ = IntBindT $ do
+    i <- newIdent
+    setTermState i $ Bound (typeRep @t) (typeRep @m) $ freeVarState (typeRep @t)
+    return i
     -- Generate a new identifier
     -- Add initial term-state to our state map
-    -- add variable to our intgraph.
 
   lookupVar :: (MonadError e (IntBindT m), Term e t)
     => VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
