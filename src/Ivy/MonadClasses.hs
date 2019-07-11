@@ -1,5 +1,5 @@
 
-{---# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-|
 Module      : Ivy.Scratchpad
 Description : Random scratch work goes here until it's moved
@@ -44,11 +44,11 @@ import Ivy.Prelude
 class MonadBind t m => MonadUnify t m  where
 
   -- | This allows you to unify terms in your given context.
-  unify :: (Unifiable e t, MonadError e m) => t (Var m t) -> t (Var m t) -> m (Var m t)
+  unify :: (Unifiable e t, MonadError e m) => Var t m -> Var t m -> m (Var t m)
 
   -- | Tells us whether two terms have been unified. Does not change
   --   the state of the update, just return information.
-  equals :: (Unifiable e t, MonadError e m) => t (Var m t) -> t (Var m t) -> m Bool
+  equals :: (Unifiable e t, MonadError e m) => Var t m -> Var t m -> m Bool
 
   -- TODO :: I'm not confident that we want an equiv operation since
   --        that may break the upwards closed nature of our various operations
@@ -64,7 +64,7 @@ class MonadBind t m => MonadUnify t m  where
 
 -- | A property is a many-to-one relationship between two terms of potentially
 --   different types.
-class Property p t t' | p -> t, p -> t'
+class (Eq p, Ord p, Hashable p) => Property p t t' | p -> t, p -> t'
 
 -- | A binding monad that can support property relations between terms.
 --
@@ -113,8 +113,12 @@ class MonadBind t m where
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
-  -- | Asserts that the first variable is <= the second.
-  subsumes :: Var m t -> Var m t -> m Bool
+  -- | Asserts that the first var subsumes the second.
+  subsume :: Var t m -> Var t m -> m Bool
+
+  -- | Asks whether the first variable is <= the second
+  subsumes :: Var t m -> Var t m -> m Bool
+
 
 
 
@@ -129,6 +133,9 @@ class (Monad m) => MonadAttempt m where
   --   Keep in mind that the f here isn't actually an error per-se, just
   --   some knowledge that has been gained from the rolled back computation.
   --   E.g. if you're doing CDCL `f` could be a newly learned conflict clause.
+  --
+  --   NOTE: We're not using something like LogicT because this interface works
+  --         better with the push-pop interface of incremental SMT solving.
   attempt :: m (Either f b) -> (f -> m b) -> m b
 
 
@@ -138,8 +145,17 @@ class (Monad m) => MonadAttempt m where
 --   You need to provide the instructions on how to compose and decompose
 --   the state for that monad transformer.
 --
---   TODO :: Modify this to work with fmap.
-defaultLiftAttempt :: forall t m f b. (MonadTransControl t, MonadAttempt m, Monad (t m))
+--   If an error is thrown during the attempted action then we revert the
+--   action, but allow the error to continue propagating. This seems like
+--   the least bad way to handle the problem. The bindings that triggered
+--   the error may well be missing due to rolling things back, but at least
+--   you're in a coherent state of some sort that you might be able to
+--   recover from.
+defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
+                                      MonadAttempt m,
+                                      Monad (t m),
+                                      MonadError e (t m)
+                                     )
                    => (forall a. StT t a -> (StT t (), a))
                    -> (forall a. (StT t (), a) -> StT t a)
                    -> t m (Either f b)
@@ -147,17 +163,25 @@ defaultLiftAttempt :: forall t m f b. (MonadTransControl t, MonadAttempt m, Mona
                    -> t m b
 defaultLiftAttempt extractState insertState act recover = do
   initState <- captureT
-  result :: StT t b <- liftWith $ \ run ->
-    attempt (act' run ) $ recover' run initState
+  result <- liftWith $ \ run ->
+    attempt (act' run) $ recover' run initState
   restoreT $ pure result
     where
-      act' :: Run t -> m (Either f (StT t b))
-      act' run = extractState @(Either f b) <$> run act >>= \case
-        (st, Right b) -> pure . Right $ insertState (st, b)
-        (_ , Left  f) -> pure $ Left f
+      wAct :: t m (Either (Either e f) b)
+      wAct = catchError (first Right <$> act) (pure . Left . Left)
 
-      recover' :: Run t -> StT t () -> f -> m (StT t b)
-      recover' run initSt f = run $ restoreT (pure initSt) >>= (\ () -> recover f)
+
+      act' :: Run t -> m (Either (Either e f) (StT t b))
+      act' run = extractState <$> (run @_  @(Either (Either e f) b) wAct) >>= \case
+        (st, Right b) -> pure . Right $ insertState (st, b :: b)
+        (_ , Left  f) -> pure $ Left  f
+
+      recover' :: Run t -> StT t () -> Either e f -> m (StT t b)
+      recover' run initSt f
+        = run $ restoreT (pure initSt) >>= (\ () -> case f of
+            (Left e) -> throwError e
+            (Right f') -> recover f')
+
 
 -- So what we want:
 --

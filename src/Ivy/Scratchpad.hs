@@ -21,43 +21,296 @@ import Ivy.Wrappers.IntSet (IntSet)
 import qualified Ivy.Wrappers.IntSet as IS
 import Ivy.Wrappers.IntGraph (IntGraph)
 import qualified Ivy.Wrappers.IntGraph as IG
+import Data.Bimap (Bimap)
+import qualified Data.Bimap as BM
+import Data.TypeMap.Dynamic.Alt (TypeMap, Item)
+import qualified Data.TypeMap.Dynamic.Alt as TM
+import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HM
+import Data.HashSet (HashSet)
+import qualified Data.HashSet as HS
 -- import qualified Data.IntMap as M
 -- import Data.TypeMap.Dynamic (TypeMap)
 -- import qualified Data.TypeMap.Dynamic as TM
 
-data Config = Conf {}
+-- | Uninhabited type we use for our Item family.
+data RelMap m
+type instance Item (RelMap m) t = HashMap t ETID
 
+-- | Reader Monad Info
+data Context m = Context {
+    _config :: Config m
+  , _assumptions :: Assumptions m
+  }
 
+-- | General config info that only needs to be set once.
+data Config m = Config {
+    -- | How many times do we try to unify a single pair of elements before
+    --   giving up hope that it will ever quiesce.
+    _maxCyclicUnifications :: Int
+    -- | An action to generate a new unique ID. It's here because often we
+    --   will want to generate UIDs in a context lower in the stack that isn't
+    --   really aware of backtracking from using 'attempt'. That way we don't
+    --   get ID collisions simply because a supply generated the same term.
+    --
+    --   We're not adding something to generate IDs to the monad stack
+    --   because that seems like we're asking too much.
+  , _generateNewID :: m Int
+  }
+
+-- | A set of assumptions about the term-graph that were either made or
+--   relied upon. We use this to properly handle cyclic terms and co-inductive
+--   reasoning in general.
+--
+--   For instance, when trying to unify two terms, you don't want to get caught
+--   in a cycle of repeatedly unifying elements. So you proceed unifying
+--   subterms with an assumption that the parent terms are already unified.
+--
+--   In the writer slot, this allows for one to get those assumptions which
+--   were hit when this process happened.
+data Assumptions m = Assumptions {
+    -- | Assumption that a pair of terms are unified.
+    _unified :: HashSet (ETID,ETID)
+    -- | Assumption that some pair of terms is structurally equal, without
+    --   necessarily being unified.
+  , _equal :: HashSet (ETID,ETID)
+    -- | Assumption that one term subsumes another.
+  , _subsumed :: HashSet (ETID,ETID)
+  }
+
+-- | Runtime state of our term-graph thing.
 data State m = State {
-     termData :: IntMap ETermID (TermState m)
+     -- | Term Specific Information.
+     _termData :: IntMap ETermID (TermState m)
    }
 
+-- | A termID without knowledge about the type of its term.
 newtype ETermID = ETID { getETID :: Int }
 
 instance Newtype ETermID Int where
   pack = ETID
   unpack = getETID
 
-newtype TermID t = TID { getTID :: Int}
+-- | an identifier for a specific term.
+newtype TermID t = TID { getTID :: Int }
 
 instance Newtype (TermID t) Int where
-  pack = TID
+  pack = TID typeRef
   unpack = getTID
 
+-- | an identifier for a specific term.
+newtype VarID t m = VID { getVID :: Int}
+
+instance Newtype (VarID t m) Int where
+  pack = VID
+  unpack = getVID
+
+type BoundStateIB t m = BoundState t (IntBindT m)
+
+-- | The state for a bound term, with type information.
+data BoundState t m = BTS {
+       _termValue :: Maybe (t (Var t m))
+     -- | Relations from this term to other terms
+     , _relations :: TypeMap (RelMap m)
+     -- | Terms that ultimately point to this term
+     , _forwardedFrom :: IntSet (Var t m)
+     -- | What terms does this one subsume?
+     , _subsumedTerms :: IntSet (Var t m)
+     -- | Has this term been changed and not had any of its hooks run.
+     , _dirty :: !Bool
+     }
+
+type TermStateIB m = TermState (IntBindT m)
 
 -- | The unique state information we store for each term.
 data TermState m where
-  TermState :: {
-       termType :: TypeRep t
-     , termValue :: Maybe (t (Var t m))
-     , dirty :: Bool
-     } -> TermState m
-  Unified :: TypeRep t -> TermID t -> TermState m
-  Errored :: (MonadError e m) => e -> TermState m
+  Bound     :: TypeRep t -> BoundState t m -> TermState m
+  Forwarded :: TypeRep t -> TermID t -> TermState m
+  Errored   :: (MonadError e m) => TypeRep t -> e -> TermState m
 
--- | Pure and Slow Transformer that allows for most of the neccesary binding
+-- | The state of a newly inserted free term.
+initialTermState :: proxy t -> TermState m
+initialTermState = TermState {
+    _termType = typeRep @t
+  , _termValue = Nothing
+  , _relations = TM.empty
+  , _forwardedFrom = IS.empty
+
+  , _dirty = True
+  }
+
+-- | Strip type information from a TermID
+crushTID :: TermID t -> ETermID
+crushTID = pack . unpack
+
+-- | Add (potentially incorrect) type information to am ETID
+unsafeExpandTID :: ETermID -> TermID t
+unsafeExpandTID = pack . unpack
+
+-- | Strip Monad information from a VerID
+crushVID :: VarID t m -> TermID t
+crushVID = pack . unpack
+
+-- | Add (potentially incorrect) monad information to a VID
+unsafeExpandVID :: TermID t -> VarID t m
+unsafeExpandVID = pack . unpack
+
+-- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
-type IntBindT m = RWST Config () (State m) m
+newtype IntBindT m = IBT {
+  getIBT :: RWST (Context (IntBintT m))
+                 (Assumptions (IntBindT m))
+                 (State (IntBindT m)) m
+  }
+
+-- | Keep from having to repeatedly
+type VarIB t m = Var t (IntBindT m)
+
+instance ( Typeable t
+         , Typeable m
+         , InternalError e m
+         , MonadError e m
+         ) => MonadBind t (IntBindT m) where
+
+  type Var t (IntBindT m) = VarID t (IntBindT m)
+
+  freeVar :: (MonadError e (IntBindT m), Unifiable e t)
+    => proxy t -> IntBindT m (VarIB t m)
+  freeVar = undefined
+    -- Generate a new identifier
+    -- Add initial term-state to our state map
+    -- add variable to our intgraph.
+
+  lookupVar :: (MonadError e (IntBindT m), Unifiable e t)
+    => VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
+  lookupVar = undefined
+    -- get the correct termstate
+    -- get the termvalue out of that termstate
+
+  bindVar :: (MonadError e (IntBindT m), Unifiable e t)
+    => VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
+  bindVar = undefined
+    -- update the termState with the new varId
+    -- Perform any neccesary bookkeeping
+       -- move relation
+
+-- | Generate a new internal identifier of some type.
+newIdent :: forall i. (Newtype i Int) => IntBindT m i
+newIdent = undefined
+
+-- | Gets the TermState for a variable, without further traversing
+--   the network of connections to get to the final element.
+getTermState :: VarIB t m -> IntBindT m (TermStateIB m)
+getTermState = undefined
+
+-- | A context for an error modifies an error to add additional metadata.
+type Context e = e -> e
+
+-- | Errors that are internal to our current library and are not due to
+--   user error.
+class InternalErr e m where
+  invalidTypeFound :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
+  gettingTermStateFor :: (Typeable t) => Var t m -> Context e
+  gettingTerminalVarVor :: (Typeable t) => Var t m -> Context e
+
+-- | Potentially gets a termState for a variable throwing an error if the
+--   type is incorrect. Does not traverse to find the final element.
+getBoundState :: VarIB t m -> IntBindT m (Maybe (BoundStateIB t m))
+getBoundState = undefined
+
+-- | Wholesale replacement of a termstate without any other bookkeeping
+--   or the like.
+setTermState :: VarIB t m -> TermStateIB m -> IntBindT m ()
+setTermState = undefined
+
+-- | Updates the termState of a variable while performing other bookkeeping
+--   tasks.
+updateTermState :: VarIB t m -> TermStateIB m -> IntBindT m ()
+updateTermState = undefined
+
+-- | Finds the terminal element in a chain of forwarded terms. Performs
+--   path compression during the lookup phase.
+getBoundVar :: VarIB t m -> IntBindT m (VarIB t m)
+getBoundVar = undefined
+
+instance MonadUnify t (IntBindT m) where
+
+  unify :: (Unifiable e t, MonadError e m)
+    => VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
+  unify = undefined
+    -- check if the terms are structurally equal and return result
+    -- check if the terms are unified wrt to assumptions and return result
+    -- otherwise, start merging terms layer by layer.
+       -- Bookkeeping for
+           -- Properties
+           -- forwardedSet
+
+  equals :: (Unifiable e t, MonadError e m)
+    => VarIB t m -> VarIB t m -> IntBindT m Bool
+  equals = undefined
+    -- check if terms are structurally equal
+    -- check if terms are unified wrt to assumptions
+    -- check if terms are equal wrt to assumptions.
+    -- otherwise do layer by layer equality check
+
+-- | Checks whether two terms are marked as having been unified in our
+--   assumptions. If yes, then adds the corresponding unification term
+--   to the read set and moves on.
+assumeUnified :: VarIB t m -> VarIB t m -> IntBindT m (Maybe (VarIB t m))
+assumeUnified = undefined
+
+-- | Checks whether we have an assumption of equality, if yes then
+--   writes out the equality to the read set.
+assumeEquals :: VarIB t m -> VarIB t m -> IntBindT m Bool
+assumeEquals = undefined
+
+instance MonadSubsume t m where
+
+  -- TODO :: Okay so the question is how do we properly recurse? do we
+  --        filter step by step, or what.
+  subsume :: VarIB t m -> VarIB t m -> IntBindT m ()
+  subsume = undefined
+    -- check equality and assumptions
+    -- add subsumption relationship to initial term
+    -- mark as dirty
+
+  subsumes :: VarIB t m -> VarIB t m -> IntBindT m Bool
+  subsumes = undefined
+    -- Check structuralEquality
+    -- check equality and unity assumptions
+    -- check subsume assumptions
+    -- check layer by layer subsumption.
+
+
+-- | Checks whether one term is subsumed by another in our assumptions.
+assumeSubsumed :: VarIB t m -> VarIB t m -> IntBindT m Bool
+assumeSubsumed = undefined
+
+data TV t v = T (t (TV t v)) | V v
+
+-- | Actually performs the subsumption operation while keeping track
+--   of the set of currently assumed subsumptions that are required
+--   for the operation to succeed
+performSubsume :: VarIB t m -> VarIB t m -> IntBindT m ()
+performSubsume = undefined
+  -- Add assumption of these terms being subsumed.
+  -- subsume single layer of terms by lifting subsume with the JoinSemiLattice
+
+instance (Typeable p, Typeable m) => MonadProperty p (IntBindT m) where
+
+  propertyOf :: (Property p t t', MonadBind t (IntBindT m), MonadBind t' (IntBindT m))
+    => p -> VarIB t m -> IntBindT m (VarIB t' m)
+  propertyOf = undefined
+    -- Check if a property exists in the corresponding term
+    -- If no, then create a freeVar and assign it to that property
+    -- if yes, then get the term pointed to by the property in the map.
+
+
+instance MonadAttempt (IntBindT m) where
+
+  attempt :: IntBindT m (Either f b) -> (f -> IntBindT m b) -> IntBindT m b
+  attempt = defaultLiftAttempt (\ (s,a) -> ((s, ()), a)) (\ ((s, ()), a) -> (s, a)
+
 
 
 -- TODO ::

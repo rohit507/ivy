@@ -21,6 +21,7 @@ dependencies:
   - tasty-hedgehog
   - hedgehog
   - free
+  - lens
   - containers
   - monad-control
   - unordered-containers
@@ -28,6 +29,8 @@ dependencies:
   - recursion-schemes
   - data-reify
   - type-map
+  - bimap
+  - concurrent-supply
   - newtype
   - algebraic-graphs
   - logging

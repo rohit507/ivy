@@ -10,6 +10,7 @@ Portability : POSIX
 
 module Ivy.Prelude (
     module P
+  , modifyError
 ) where
 
 import Intro as P
@@ -26,7 +27,11 @@ import Control.Monad.Free.Church as P
 import Control.Newtype as P
 import GHC.Exts as P (fromListN)
 import GHC.TypeLits as P
+import Control.Concurrent.Supply as P
 
+-- | Will modify an error if one is thrown, but otherwise leave it alone.
+modifyError :: (MonadError e m) => (e -> e) -> m a -> m a
+modifyError ef m = catchError m (throwError . ef)
 {-
 import Data.Functor as B
 
