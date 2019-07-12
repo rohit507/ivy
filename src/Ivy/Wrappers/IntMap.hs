@@ -26,3 +26,9 @@ singleton k = IMW . IM.singleton (unpack k)
 
 lookup :: (N k) => k -> IntMap k v -> Maybe v
 lookup k (IMW i) = IM.lookup (unpack k) i
+
+insert :: (N k) => k -> v -> IntMap k v -> IntMap k v
+insert k v (IMW i) = IMW $ IM.insert (unpack k) v i
+
+adjust :: (N k) => (v -> v) -> k -> IntMap k v -> IntMap k v
+adjust f k (IMW i) = IMW $ IM.adjust f (unpack k) i

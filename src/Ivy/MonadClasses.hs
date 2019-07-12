@@ -14,6 +14,7 @@ module Ivy.MonadClasses where
 
 import Ivy.Prelude
 import Algebra.Lattice
+import qualified Data.Text as Text
 
 -- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It
@@ -40,8 +41,13 @@ import Algebra.Lattice
 --            I suspect it would be faster to build, but not as simple
 --            to manipulate.
 
+-- | Constraints that terms should meet
 type Term e t = (Typeable t, JoinSemiLattice1 e t)
-type IBM e m = (MonadError e m, InternalError e, Typeable m, Typeable e)
+
+-- | Constraints that an int binding monad must meet.
+type IBM e m = (MonadError e m, BindingError e, Typeable m, Typeable e)
+
+type IBTM e t m = (Term e t, IBM e m, Show (Var t m), Typeable (Var t))
 
 -- | This monad gives you the ability to unify terms in some unifiable language.
 class MonadBind t m => MonadUnify t m  where
@@ -105,15 +111,15 @@ class MonadBind t m where
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
   --   requiring a whole pile of extra effort.
-  freeVar :: (IBM e m, Term e t) => proxy t -> m (Var t m)
+  freeVar :: (IBTM e t m) => m (Var t m)
 
   -- | Get the single layer term for some variable or `Nothing` if
   --   the var is unbound.
-  lookupVar  :: (IBM e m, Term e t) => Var t m -> m (Maybe (t (Var t m)))
+  lookupVar  :: (IBTM e t m) => Var t m -> m (Maybe (t (Var t m)))
 
   -- | Binds a variable to some term, overwriting any existing term for that
   --   variable if needed.
-  bindVar :: (IBM e m, Term e t) => Var t m -> t (Var t m) -> m (Var t m)
+  bindVar :: (IBTM e t m) => Var t m -> t (Var t m) -> m (Var t m)
 
 class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
@@ -196,9 +202,77 @@ type ErrorContext e = e -> e
 
 -- | Errors that are internal to our current library and are not due to
 --   user error.
-class InternalError e where
-  invalidTypeFound :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
-  nonexistentTerm :: (Typeable t, Typeable m) => Var t m -> e
-  gettingTermStateFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e
-  settingTermStateFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e
-  gettingTerminalVarFor :: (Typeable t, Typeable m) => Var t m -> ErrorContext e
+class BindingError e where
+  invalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
+  nonexistentTerm       :: (IBTM e t m) => Var t m -> e
+  expectedBoundState    :: (IBTM e t m) => Var t m -> e
+  gettingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
+  settingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
+  gettingRepresentativeOf :: (IBTM e t m) => Var t m -> ErrorContext e
+  lookingUp :: (IBTM e t m) => Var t m -> ErrorContext e
+
+
+addErrorCtxt :: Text -> Text -> Text
+addErrorCtxt ctxt = Text.unlines . (ctxt :) . map (Text.append "  ") . Text.lines
+
+showVar :: (Show (Var t m), Typeable (Var t), Typeable m) => Var t m -> Text
+showVar v =  show v <> " :: " <> show (typeOf v)
+
+instance BindingError Text where
+  invalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> Text
+  invalidTypeFound a b = "Expecting type `" <> show b <> "` but instead found `" <> show a <> "`."
+
+  nonexistentTerm       :: forall t m. (IBTM Text t m) => Var t m -> Text
+  nonexistentTerm v = "Could not find term `" <> showVar v <> "`."
+
+  gettingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
+  gettingTermStateOf v = addErrorCtxt $ "While getting TermState of `" <> showVar v <> "`:"
+
+  settingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
+  settingTermStateOf v = addErrorCtxt $ "While setting TermState of `" <> showVar v <> "`:"
+
+  gettingRepresentativeOf :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
+  gettingRepresentativeOf v = addErrorCtxt $ "While getting representative of `" <> showVar v <> "`:"
+
+  lookingUp :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
+  lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`."
+
+  expectedBoundState :: forall t m. (IBTM Text t m) => Var t m -> Text
+  expectedBoundState v = "Expected a BoundState when looking up `" <> showVar v <> "`."
+
+
+throwInvalidTypeFound :: (Typeable a, Typeable b, MonadError e m, BindingError e)
+                      => TypeRep a -> TypeRep b -> m c
+throwInvalidTypeFound a b = throwError $ invalidTypeFound a b
+
+type ThrowBindErr e t m m'
+  = ( Term e t
+  , MonadError e m'
+  , Show (Var t m')
+  , Typeable (Var t)
+  , Typeable m'
+  , Typeable e
+  , MonadError e m
+  , BindingError e
+  )
+
+throwNonexistentTerm :: (ThrowBindErr e t m m') => Var t m' -> m c
+throwNonexistentTerm = throwError . nonexistentTerm
+
+throwExpectedBoundState :: (ThrowBindErr e t m m') => Var t m' -> m c
+throwExpectedBoundState = throwError . expectedBoundState
+
+withMonadError :: (MonadError e m) => (e -> e) -> m a -> m a
+withMonadError f v = catchError v (throwError . f)
+
+whileGettingTermStateOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
+whileGettingTermStateOf = withMonadError . gettingTermStateOf
+
+whileSettingTermStateOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
+whileSettingTermStateOf = withMonadError . settingTermStateOf
+
+whileGettingRepresentativeOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
+whileGettingRepresentativeOf = withMonadError . gettingRepresentativeOf
+
+whileLookingUp :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
+whileLookingUp = withMonadError . lookingUp

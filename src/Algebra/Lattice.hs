@@ -52,14 +52,20 @@ class (Functor l) => POrd1 l where
 
 -- | Lattice elements of type @l@ that can produce errors of type @e@
 --   in join operations.
-class (POrd l) => JoinSemiLattice e l where
+--
+--   NOTE :: It is possible to define define the lattice operations without
+--          being able to define a partial order. (E.g. for monotonic
+--          `(JoinSemiLattice e a, JoinSemiLattice e b) => a -> b`)
+--          But it's very important, if there is a partial order, that the
+--          lattice and the partial order are consistent.
+class JoinSemiLattice e l where
 
   -- | Lattice join operation. Returning `Left e` means that the result
   --   of the join operation is Top, with an annotation of type @e@
   latJoin :: l -> l -> Either e l
 
 -- | A meetsemilattice over some partial order l
-class (POrd l) => MeetSemiLattice l where
+class MeetSemiLattice l where
 
   -- | Lattice meet operation, returning a value of `Nothing` indicates
   --   that the result of the operation is bottom.
@@ -68,7 +74,7 @@ class (POrd l) => MeetSemiLattice l where
 -- | A complete lattice has both meet and join operations.
 type Lattice e l = (JoinSemiLattice e l, MeetSemiLattice l)
 
-class (POrd1 l) => JoinSemiLattice1 e l where
+class JoinSemiLattice1 e l where
 
   -- | Lift a join operation through a type constructor, such that
   --   all the expected lattice properties are met.
@@ -86,7 +92,7 @@ class (POrd1 l) => JoinSemiLattice1 e l where
                 -> l p -> l p -> m (Either e (l p))
 
 
-class (POrd1 l) => MeetSemiLattice1 l where
+class MeetSemiLattice1 l where
 
   -- | Lift a meet operation through a type constructor, in
   --   such a way that allows us to decompose it explicitly.

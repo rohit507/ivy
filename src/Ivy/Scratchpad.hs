@@ -19,7 +19,6 @@ import Ivy.Prelude hiding (IntSet, IntMap)
 import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.Wrappers.IDs
-import Ivy.GeneralError
 
 import Ivy.Wrappers.IntMap (IntMap)
 import qualified Ivy.Wrappers.IntMap as IM
@@ -105,13 +104,13 @@ type BoundStateIB t m = BoundState t (IntBindT m)
 
 -- | The state for a bound term, with type information.
 data BoundState t m = BoundState {
-       termValue :: Maybe (t (VarIB t m))
+       termValue :: Maybe (t (VarID t m))
      -- | Relations from this term to other terms
      , relations :: TypeMap RelMap
      -- | Terms that ultimately point to this term
-     , forwardedFrom :: IntSet (VarIB t m)
+     , forwardedFrom :: IntSet (VarID t m)
      -- | What terms does this one subsume?
-     , subsumedTerms :: IntSet (VarIB t m)
+     , subsumedTerms :: IntSet (VarID t m)
      -- | Has this term been changed and not had any of its hooks run.
      , dirty :: !Bool
      }
@@ -119,18 +118,23 @@ data BoundState t m = BoundState {
 -- | The unique state information we store for each term.
 data TermState where
   Bound     :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> BoundState t m -> TermState
-  Forwarded :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> TermID t -> TermState
-  Errored   :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> e -> TermState
+  Forwarded :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> VarIB t m -> TermState
+  Errored   :: (IBTM e t m, Typeable e)
+    => TypeRep t -> TypeRep m -> TypeRep e -> e  -> TermState
 
 -- | The state of a newly inserted free term.
-freeVarState :: proxy t -> BoundState t m
-freeVarState _ = BoundState {
+freeVarState :: forall t m. BoundState t m
+freeVarState = BoundState {
     termValue = Nothing
   , relations = TM.empty
   , forwardedFrom = IS.empty
   , subsumedTerms = IS.empty
   , dirty = True
   }
+
+-- | The term state of a newly inserted term
+freeTermState :: forall t m e. (IBTM e t m) => VarIB t m -> TermState
+freeTermState _ = Bound (typeRep @t) (typeRep @m) freeVarState
 
 type IBRWST = RWST Context Assumptions BindingState
 
@@ -164,18 +168,12 @@ instance MonadTransControl IntBindT where
 -- | Keep from having to repeatedly
 type VarIB t m = Var t (IntBindT m)
 
-instance ( Typeable t
-         , Typeable m
-         ) => MonadBind t (IntBindT m) where
+instance MonadBind t (IntBindT m) where
 
   type Var t = VarID t
 
-  freeVar :: forall t m e proxy.  (MonadError e (IntBindT m), Term e t)
-    => proxy t -> IntBindT m (VarIB t m)
-  freeVar _ = IntBindT $ do
-    i <- newIdent
-    setTermState i $ Bound (typeRep @t) (typeRep @m) $ freeVarState (typeRep @t)
-    return i
+  freeVar :: () => IntBindT m (VarIB t m)
+  freeVar = undefined
     -- Generate a new identifier
     -- Add initial term-state to our state map
 
@@ -195,31 +193,74 @@ instance ( Typeable t
 -- | Generate a new internal identifier of some type.
 --
 --   First type parameter is the output ident type.
-newIdent :: forall i m e m'. (IBM e m , Newtype i Int) => IBRWST m i
-newIdent = ask >>= \ (Context trm config _) ->
-  case eqTypeRep trm $ typeRep @(IntBindT m) of
-    Nothing -> throwInvalidTypeFound trm (typeRep @m)
-    Just HRefl -> map pack . getIBT $ generateNewID config
+newIdent :: forall i m e. (IBM e m , Newtype i Int) => IBRWST m i
+newIdent = ask >>= \ (Context trm config _) -> matchType @m trm
+    (throwInvalidTypeFound trm (typeRep @m))
+    (\ HRefl -> lift . map pack $ generateNewID config)
+
+-- | Create a free var in IBRWST
+freeVarT ::forall t m e. (IBTM e t m) => IBRWST m (VarIB t m)
+freeVarT = do
+  i <- newIdent @(VarIB t m)
+  setTermState i $ freeTermState i
+  pure i
+
+-- | When looking up a variable we need to find its representative
+--
+--   Performs additional bookkeeping.
+lookupVarT :: forall t m e. (IBTM e t m)
+           => VarIB t m -> IBRWST m (Maybe (t (VarIB t m)))
+lookupVarT v = do
+  v' <- getRepresentative v
+  termValue <$> getBoundState v'
+
+-- | Binds a variable to a term, performs additional bookkeeping
+bindVarT :: forall t m e. (IBTM e t m)
+         => VarIB t m -> t (VarIB t m) -> IBRWST m (VarIB t m)
+bindVarT v t = do
+    v' <- getRepresentative v
+    modifyBoundState v' (pure . mod)
+    pure v'
+  where
+    mod s@BoundState{..} = s{termValue = Just t}
+
+-- | perform some action if types don't match
+matchType :: forall t t' a. (Typeable t)
+           => TypeRep t' -> a -> (t :~~: t' -> a) -> a
+matchType tr err succ = case eqTypeRep tr (typeRep @t) of
+  Nothing -> err
+  Just HRefl -> succ HRefl
+
+-- | Matches a pair of types instead of just one.
+matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
+           => TypeRep t' -> a
+           -> TypeRep m' -> a
+           -> (t :~~: t' -> m :~~: m' -> a)
+           -> a
+matchType2 tt errt tm errm succ =
+  matchType @t tt errt
+    (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
 
 -- | Ensures that the type of the term state matches the type of the
 --   input variable.
-validateTermStateType :: forall t m e. (IBM e m, Term e t) => VarIB t m -> TermState -> IBRWST m ()
+validateTermStateType :: forall t m e. (IBM e m, Term e t)
+                      => VarIB t m -> TermState -> IBRWST m ()
 validateTermStateType _ st = case st of
-  (Bound     trt trm _) -> validateTypes trt trm
-  (Forwarded trt trm _) -> validateTypes trt trm
-  (Errored   trt trm _) -> validateTypes trt trm
+  (Bound     trt trm _  ) -> validateTypes trt trm
+  (Forwarded trt trm _  ) -> validateTypes trt trm
+  (Errored   trt trm _ _) -> validateTypes trt trm
 
   where
 
-    validateTypes :: (Typeable t', Typeable m') => TypeRep t' -> TypeRep m' -> IBRWST m ()
+    validateTypes :: (Typeable t', Typeable m')
+                  => TypeRep t'
+                  -> TypeRep m'
+                  -> IBRWST m () -- (t :~~: t', m :~~: m`)
     validateTypes tt tm  = do
-      case eqTypeRep tt $ typeRep @t of
-        Nothing -> throwInvalidTypeFound tt (typeRep @t) :: IBRWST m ()
-        Just HRefl -> pure ()
-      case eqTypeRep tm $ typeRep @(IntBindT m) of
-        Nothing -> throwInvalidTypeFound tm (typeRep @(IntBindT m))
-        Just HRefl -> pure ()
-
+      matchType @t tt (throwInvalidTypeFound tt (typeRep @t)) pure
+      matchType @(IntBindT m) tm (throwInvalidTypeFound tm (typeRep @(IntBindT m)))
+         pure
+      pure () -- (r1,r2)
 
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
@@ -231,23 +272,80 @@ getTermState v = do
     Just ts -> validateTermStateType v ts *> pure ts
 
 -- | Sets the termState for a variable without additional bookkeeping.
+--
+--   FIXME :: If termState is an error, and the thing to be inserted is an error
+--      merge the errors, otherwise trying to set an errored term should be
+--      a nop
 setTermState :: (IBM e m, Term e t) => VarIB t m -> TermState -> IBRWST m ()
-setTermState = undefined
+setTermState var term = do
+  validateTermStateType var term
+  modify (\ b -> b{termData = IM.insert (flattenVID var) term $ termData b})
 
--- | Potentially gets a termState for a variable throwing an error if the
+-- | Modifies the term state of something with a function, does not
+--   do additional bookkeeping.
+modifyTermState :: (IBTM e t m)
+                => VarIB t m
+                -> (TermState -> IBRWST m TermState)
+                -> IBRWST m ()
+modifyTermState v f = getTermState v >>= f >>= setTermState v
+
+
+
+-- | Potentially gets a BoundState for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
-getBoundState :: VarIB t m -> IBRWST m (Maybe (BoundStateIB t m))
-getBoundState = undefined
+getBoundState :: forall t m e. (IBTM e t m) => VarIB t m -> IBRWST m (BoundStateIB t m)
+getBoundState v = getTermState v >>= \case
+  (Bound tt tm bs) -> matchType2 @t @(IntBindT m)
+     tt (throwInvalidTypeFound tt (typeRep @t))
+     tm (throwInvalidTypeFound tm (typeRep @(IntBindT m)))
+     (\ HRefl HRefl -> pure bs)
+  _ -> throwExpectedBoundState v
 
--- | Updates the termState of a variable while performing other bookkeeping
---   tasks.
-updateTermState :: VarIB t m -> TermState -> IBRWST m ()
-updateTermState = undefined
+-- | Sets the boundState of a trm
+setBoundState :: forall t m e. (IBTM e t m) => VarIB t m -> BoundStateIB t m -> IBRWST m ()
+setBoundState v = modifyTermState v . const . pure . Bound typeRep typeRep
 
--- | Finds the terminal element in a chain of forwarded terms. Performs
---   path compression during the lookup phase.
-getBoundVar :: VarIB t m -> IBRWST m (VarIB t m)
-getBoundVar = undefined
+-- | Modifies the bound state of a term
+modifyBoundState :: forall t m e. (IBTM e t m)
+                 => VarIB t m
+                 -> (BoundStateIB t m -> IBRWST m (BoundStateIB t m))
+                 -> IBRWST m ()
+modifyBoundState v f =
+  getBoundState v >>= map (Bound typeRep typeRep) . f >>= setTermState v
+
+-- | Potentially gets a forwarded var for a variable throwing an error if the
+--   type is incorrect. Does not traverse to find the final element.
+getForwardingVar :: forall t m e. (IBTM e t m) => VarIB t m -> IBRWST m (Maybe (VarIB t m))
+getForwardingVar v = getTermState v >>= \case
+  (Forwarded tt tm i) -> matchType2 @t @m
+     tt (throwInvalidTypeFound tt (typeRep @t))
+     tm (throwInvalidTypeFound tm (typeRep @m))
+     (\ HRefl HRefl -> pure $ Just i)
+  _ -> pure Nothing
+
+
+-- | Tries to get the error corresponding to a particular term.
+--   Does not try to traverse the forwarding chain.
+getTermError :: forall t m e. (IBTM e t m) => VarIB t m -> IBRWST m (Maybe e)
+getTermError v = getTermState v >>= \case
+  (Errored _ _ te i) -> matchType @e
+     te (throwInvalidTypeFound te (typeRep @e))
+     (\ HRefl -> pure $ Just i)
+  _ -> pure Nothing
+
+-- | Finds the Representative element for a Var in our disjoint set structure.
+--
+--   Element returned should always be an Error or a Bound Term.
+--   Forwards paths as needed.
+getRepresentative :: forall t m. VarIB t m -> IBRWST m (VarIB t m)
+getRepresentative v = getForwardingVar v >>= \case
+  Nothing -> pure v
+  Just v' -> do
+    v'' <- getRepresentative v'
+    when (v' != v'') $ setTermState v (Forwarded typeRep typeRep v'')
+    pure v''
+
+
 
 instance MonadUnify t (IntBindT m) where
 

@@ -11,16 +11,10 @@ Portability : POSIX
 module Ivy.GeneralError where
 
 import Ivy.Prelude
-import Ivy.Wrappers.IDs
 import Ivy.MonadClasses
 
 
 
-throwInvalidTypeFound :: (InternalError e, MonadError e m, Typeable a, Typeable b) => TypeRep a -> TypeRep b -> m c
-throwInvalidTypeFound a b = throwError $ invalidTypeFound a b
-
-throwNonexistentTerm :: (InternalError e, MonadError e m, Typeable t, Typeable m, Typeable m') => Var t m' -> m c
-throwNonexistentTerm a = throwError $ nonexistentTerm a
 
 data IntErr e where
   InvalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e -> IntErr e
