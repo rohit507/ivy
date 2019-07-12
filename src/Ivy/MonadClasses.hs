@@ -84,7 +84,7 @@ class MonadProperty p m where
 
   -- | Retrieve the term re
   propertyOf :: (Property p t t', MonadBind t m, MonadBind t' m)
-             => p -> Var m t -> m (Var m t')
+             => p -> Var t m -> m (Var t' m)
 
 {-
 -- | Lets you define how unification works for some specific type of term.
@@ -238,7 +238,7 @@ instance BindingError Text where
   lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`."
 
   expectedBoundState :: forall t m. (IBTM Text t m) => Var t m -> Text
-  expectedBoundState v = "Expected a BoundState when looking up `" <> showVar v <> "`."
+  expectedBoundState v = "Expected a BoundState when looking up `" <>showVar v <> "`."
 
 
 throwInvalidTypeFound :: (Typeable a, Typeable b, MonadError e m, BindingError e)

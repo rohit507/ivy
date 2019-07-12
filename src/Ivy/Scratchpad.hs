@@ -47,7 +47,7 @@ data Context where
   Context :: (Monad m, Typeable m) => {
     monadType :: TypeRep m
   , conf :: Config m
-  , assumes :: Assumptions
+  , assumes :: Assuming
   } -> Context
 
 
@@ -77,7 +77,7 @@ data Config m = Config {
 --
 --   In the writer slot, this allows for one to get those assumptions which
 --   were hit when this process happened.
-data Assumptions = Assumptions {
+data Assuming = Assuming {
     -- | Assumption that a pair of terms are unified.
     unified :: HashSet (ETID,ETID)
     -- | Assumption that some pair of terms is structurally equal, without
@@ -87,12 +87,17 @@ data Assumptions = Assumptions {
   , subsumed :: HashSet (ETID,ETID)
   }
 
-instance Semigroup Assumptions where
-  (Assumptions a b c) <> (Assumptions a' b' c')
-    = Assumptions (a <> a') (b <> b') (c <> c')
+data Assumption
+  = ETID `IsUnifiedWith` ETID
+  | ETID `IsEqualTo`     ETID
+  | ETID `IsSubSumedBy`  ETID
 
-instance Monoid Assumptions where
-  mempty = Assumptions mempty mempty mempty
+instance Semigroup Assuming where
+  (Assuming a b c) <> (Assuming a' b' c')
+    = Assuming (a <> a') (b <> b') (c <> c')
+
+instance Monoid Assuming where
+  mempty = Assuming mempty mempty mempty
 
 -- | Runtime state of our term-graph thing.
 data BindingState = BindingState {
@@ -136,7 +141,7 @@ freeVarState = BoundState {
 freeTermState :: forall t m e. (IBTM e t m) => VarIB t m -> TermState
 freeTermState _ = Bound (typeRep @t) (typeRep @m) freeVarState
 
-type IBRWST = RWST Context Assumptions BindingState
+type IBRWST = RWST Context Assuming BindingState
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
 --   operations.
@@ -158,7 +163,7 @@ instance MonadTrans IntBindT where
 
 instance MonadTransControl IntBindT where
 
-  type StT IntBindT a = (a, BindingState, Assumptions)
+  type StT IntBindT a = (a, BindingState, Assuming)
   liftWith f = IntBindT . rwsT $ \r s -> map (\x -> (x, s, mempty))
                                       (f $ \t -> runRWST (getIBT t) r s )
   restoreT mSt = IntBindT . rwsT $ \_ _ -> mSt
@@ -168,27 +173,21 @@ instance MonadTransControl IntBindT where
 -- | Keep from having to repeatedly
 type VarIB t m = Var t (IntBindT m)
 
-instance MonadBind t (IntBindT m) where
+instance (forall e.
+           MonadError e (IntBindT m)
+         , MonadError e m
+         , IBTM e t m) => MonadBind t (IntBindT m) where
 
   type Var t = VarID t
 
-  freeVar :: () => IntBindT m (VarIB t m)
-  freeVar = undefined
-    -- Generate a new identifier
-    -- Add initial term-state to our state map
+  freeVar :: IntBindT m (VarIB t m)
+  freeVar = IntBindT $ freeVarT
 
-  lookupVar :: (MonadError e (IntBindT m), Term e t)
-    => VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
-  lookupVar = undefined
-    -- get the correct termstate
-    -- get the termvalue out of that termstate
+  lookupVar :: VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
+  lookupVar = IntBindT . lookupVarT
 
-  bindVar :: (MonadError e (IntBindT m), JoinSemiLattice1 e t)
-    => VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
-  bindVar = undefined
-    -- update the termState with the new varId
-    -- Perform any neccesary bookkeeping
-       -- move relation
+  bindVar :: VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
+  bindVar v t = IntBindT $ bindVarT v t
 
 -- | Generate a new internal identifier of some type.
 --
@@ -219,10 +218,10 @@ bindVarT :: forall t m e. (IBTM e t m)
          => VarIB t m -> t (VarIB t m) -> IBRWST m (VarIB t m)
 bindVarT v t = do
     v' <- getRepresentative v
-    modifyBoundState v' (pure . mod)
+    modifyBoundState v' (pure . modif)
     pure v'
   where
-    mod s@BoundState{..} = s{termValue = Just t}
+    modif s@BoundState{..} = s{termValue = Just t}
 
 -- | perform some action if types don't match
 matchType :: forall t t' a. (Typeable t)
@@ -257,10 +256,12 @@ validateTermStateType _ st = case st of
                   -> TypeRep m'
                   -> IBRWST m () -- (t :~~: t', m :~~: m`)
     validateTypes tt tm  = do
-      matchType @t tt (throwInvalidTypeFound tt (typeRep @t)) pure
-      matchType @(IntBindT m) tm (throwInvalidTypeFound tm (typeRep @(IntBindT m)))
-         pure
-      pure () -- (r1,r2)
+      matchType @t
+         tt (throwInvalidTypeFound tt (typeRep @t))
+         (const skip)
+      matchType @(IntBindT m)
+         tm (throwInvalidTypeFound tm (typeRep @(IntBindT m)))
+         (const skip)
 
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
@@ -337,20 +338,19 @@ getTermError v = getTermState v >>= \case
 --
 --   Element returned should always be an Error or a Bound Term.
 --   Forwards paths as needed.
-getRepresentative :: forall t m. VarIB t m -> IBRWST m (VarIB t m)
+getRepresentative :: forall t m e. (IBTM e t m) => VarIB t m -> IBRWST m (VarIB t m)
 getRepresentative v = getForwardingVar v >>= \case
   Nothing -> pure v
   Just v' -> do
     v'' <- getRepresentative v'
-    when (v' != v'') $ setTermState v (Forwarded typeRep typeRep v'')
+    when (v' /= v'') $ setTermState v (Forwarded typeRep typeRep v'')
     pure v''
 
 
 
-instance MonadUnify t (IntBindT m) where
+instance (forall e. IBTM e t m) => MonadUnify t (IntBindT m) where
 
-  unify :: (JoinSemiLattice1 e t, MonadError e m)
-    => VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
+  unify :: VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
   unify = undefined
     -- check if the terms are structurally equal and return result
     -- check if the terms are unified wrt to assumptions and return result
@@ -359,26 +359,46 @@ instance MonadUnify t (IntBindT m) where
            -- Properties
            -- forwardedSet
 
-  equals :: (JoinSemiLattice1 e t, MonadError e m)
-    => VarIB t m -> VarIB t m -> IntBindT m Bool
+  equals :: VarIB t m -> VarIB t m -> IntBindT m Bool
   equals = undefined
     -- check if terms are structurally equal
     -- check if terms are unified wrt to assumptions
     -- check if terms are equal wrt to assumptions.
     -- otherwise do layer by layer equality check
 
+-- | Run some computation while assuming some things, return the
+--   result of that computation and the assumptions used.
+withAssumptions :: [Assumption] -> IBRWST m a -> IBRWST m (a,[Assumption])
+withAssumptions as act = undefined
+   -- local <modify reader> $ do
+   --   ((),w) <- listen skip
+   --   (a,w') <- censor (const w) $ listens (modifyAssumptions assuming) act
+   --   pure (a, decodeAssumptions w' as)
+
+
+  where
+    convert (IsEqualTo     a b) = mempty{equal=HS.fromList [(a,b),(b,a)]}
+    convert (IsSubSumedBy  a b) = mempty{subsumed=HS.singleton (a,b)}
+    convert (IsUnifiedWith a b) = mempty{unified=HS.fromList [(a,b),(b,a)]}
+
+    assuming = fold . map convert $ as
+
+    modifyAssumptions = undefined
+
+    decodeAssumptions = undefined
+
 -- | Checks whether two terms are marked as having been unified in our
 --   assumptions. If yes, then adds the corresponding unification term
 --   to the read set and moves on.
-assumeUnified :: VarIB t m -> VarIB t m -> IntBindT m (Maybe (VarIB t m))
+assumeUnified :: VarIB t m -> VarIB t m -> IBRWST m (Maybe (VarIB t m))
 assumeUnified = undefined
 
 -- | Checks whether we have an assumption of equality, if yes then
 --   writes out the equality to the read set.
-assumeEquals :: VarIB t m -> VarIB t m -> IntBindT m Bool
+assumeEquals :: VarIB t m -> VarIB t m -> IBRWST m Bool
 assumeEquals = undefined
 
-instance MonadSubsume t (IntBindT m) where
+instance (forall e. IBTM e t m) => MonadSubsume t (IntBindT m) where
 
   -- TODO :: Okay so the question is how do we properly recurse? do we
   --        filter step by step, or what.
@@ -412,8 +432,7 @@ performSubsume = undefined
 
 instance (Typeable p, Typeable m) => MonadProperty p (IntBindT m) where
 
-  propertyOf :: (Property p t t', MonadBind t (IntBindT m), MonadBind t' (IntBindT m))
-    => p -> VarIB t m -> IntBindT m (VarIB t' m)
+  -- propertyOf :: p -> VarIB t m -> IntBindT m (VarIB t' m)
   propertyOf = undefined
     -- Check if a property exists in the corresponding term
     -- If no, then create a freeVar and assign it to that property
