@@ -346,8 +346,6 @@ getRepresentative v = getForwardingVar v >>= \case
     when (v' /= v'') $ setTermState v (Forwarded typeRep typeRep v'')
     pure v''
 
-
-
 instance (forall e. IBTM e t m) => MonadUnify t (IntBindT m) where
 
   unify :: VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
@@ -366,37 +364,89 @@ instance (forall e. IBTM e t m) => MonadUnify t (IntBindT m) where
     -- check if terms are equal wrt to assumptions.
     -- otherwise do layer by layer equality check
 
--- | Run some computation while assuming some things, return the
---   result of that computation and the assumptions used.
-withAssumptions :: [Assumption] -> IBRWST m a -> IBRWST m (a,[Assumption])
-withAssumptions as act = undefined
-   -- local <modify reader> $ do
-   --   ((),w) <- listen skip
-   --   (a,w') <- censor (const w) $ listens (modifyAssumptions assuming) act
-   --   pure (a, decodeAssumptions w' as)
 
+unifyT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+unifyT a b = do
+  assumed <- (||) <$> assumeUnified a b <*>
+    ((&&) <$> assumeSubsumed a b <*> assumeSubsumed b a)
+  if assumed
+  then pure True
+  else undefined
+    -- At this point we actually try to check terms and merge them.
+
+
+-- | Run some computation while assuming some things, return the
+--   result of that computation and which of the assumptions were triggered.
+--
+--   Returns the state of the assumption stack to what it was before the
+--   action, so that we aren't accidentally keeping identifiers around that
+--   shouldn't be.
+--
+--   This is really useful for dealing with large cyclic operations, by
+--   keeping a more precise analogue of a visited set in a relatively
+--   invisible way.
+--
+--   FIXME :: This entire enterprise is implemented in an incredibly slow
+--           way. Do it better.
+withAssumption :: Monad m => Assumption -> IBRWST m a -> IBRWST m (a,Bool)
+withAssumption as act = do
+   ((),w) <- listen skip
+   local modifyAssumptions $ do
+     (a,w') <- censor (const w) $ listen act
+     tell $ assumingIntersection w w'
+     pure (a, assumingIntersects w' addedAssumptions)
 
   where
     convert (IsEqualTo     a b) = mempty{equal=HS.fromList [(a,b),(b,a)]}
     convert (IsSubSumedBy  a b) = mempty{subsumed=HS.singleton (a,b)}
     convert (IsUnifiedWith a b) = mempty{unified=HS.fromList [(a,b),(b,a)]}
 
-    assuming = fold . map convert $ as
+    addedAssumptions = convert as
 
-    modifyAssumptions = undefined
+    modifyAssumptions b@Context{..} = b{assumes=assumes <> addedAssumptions}
 
-    decodeAssumptions = undefined
+-- | Check if two sets of assumptions intersect
+assumingIntersects :: Assuming -> Assuming -> Bool
+assumingIntersects (Assuming a b c) (Assuming a' b' c')
+  = not $  HS.null (HS.intersection a a')
+        && HS.null (HS.intersection b b')
+        && HS.null (HS.intersection c c')
+
+
+-- | Get the intersection of two sets of assumptions
+assumingIntersection :: Assuming -> Assuming -> Assuming
+assumingIntersection (Assuming a b c) (Assuming a' b' c')
+  = Assuming (HS.intersection a a')
+             (HS.intersection b b')
+             (HS.intersection c c')
+
 
 -- | Checks whether two terms are marked as having been unified in our
 --   assumptions. If yes, then adds the corresponding unification term
 --   to the read set and moves on.
-assumeUnified :: VarIB t m -> VarIB t m -> IBRWST m (Maybe (VarIB t m))
-assumeUnified = undefined
+assumeUnified :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeUnified v v' = (||) <$> check v v' <*> check v' v
+
+  where
+
+    check i i' = do
+      let pair = (flattenVID i, flattenVID i')
+      res <- HS.member pair . unified . assumes <$> ask
+      when res . tell $ mempty{unified=HS.singleton pair}
+      pure res
 
 -- | Checks whether we have an assumption of equality, if yes then
 --   writes out the equality to the read set.
-assumeEquals :: VarIB t m -> VarIB t m -> IBRWST m Bool
-assumeEquals = undefined
+assumeEquals :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeEquals v v' = (||) <$> check v v' <*> check v' v
+
+  where
+
+    check i i' = do
+      let pair = (flattenVID i, flattenVID i')
+      res <- HS.member pair . equal . assumes <$> ask
+      when res . tell $ mempty{equal=HS.singleton pair}
+      pure res
 
 instance (forall e. IBTM e t m) => MonadSubsume t (IntBindT m) where
 
@@ -417,8 +467,12 @@ instance (forall e. IBTM e t m) => MonadSubsume t (IntBindT m) where
 
 
 -- | Checks whether one term is subsumed by another in our assumptions.
-assumeSubsumed :: VarIB t m -> VarIB t m -> IntBindT m Bool
-assumeSubsumed = undefined
+assumeSubsumed :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeSubsumed v v' = do
+  let pair = (flattenVID v, flattenVID v')
+  res <- HS.member pair . subsumed . assumes <$> ask
+  when res . tell $ mempty{subsumed=HS.singleton pair}
+  pure res
 
 data TV t v = T (t (TV t v)) | V v
 

@@ -11,6 +11,8 @@ Portability : POSIX
 module Ivy.Prelude (
     module P
   , modifyError
+  , listens
+  , censor
 ) where
 
 import Intro as P
@@ -32,6 +34,28 @@ import Control.Concurrent.Supply as P
 -- | Will modify an error if one is thrown, but otherwise leave it alone.
 modifyError :: (MonadError e m) => (e -> e) -> m a -> m a
 modifyError ef m = catchError m (throwError . ef)
+
+-- | @'listens' f m@ is an action that executes the action @m@ and adds
+-- the result of applying @f@ to the output to the value of the computation.
+--
+-- * @'listens' f m = 'liftM' (id *** f) ('listen' m)@
+listens :: MonadWriter w m => (w -> b) -> m a -> m (a, b)
+listens f m = do
+    ~(a, w) <- listen m
+    pure (a, f w)
+
+-- | @'censor' f m@ is an action that executes the action @m@ and
+-- applies the function @f@ to its output, leaving the return value
+-- unchanged.
+--
+-- * @'censor' f m = 'pass' ('liftM' (\\x -> (x,f)) m)@
+censor :: MonadWriter w m => (w -> w) -> m a -> m a
+censor f m = pass $ do
+    a <- m
+    pure (a, f)
+
+
+
 {-
 import Data.Functor as B
 
