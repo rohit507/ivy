@@ -13,6 +13,7 @@ module Ivy.Prelude (
   , modifyError
   , listens
   , censor
+  , maybeM
 ) where
 
 import Intro as P
@@ -23,6 +24,7 @@ import Data.Bifoldable as P
 import Data.Bitraversable as P
 import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
+import Data.Functor.Classes as P (liftEq)
 import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
@@ -54,6 +56,12 @@ censor f m = pass $ do
     a <- m
     pure (a, f)
 
+
+-- | Generalization of `Maybe` to monads
+maybeM :: (Monad m) => m a -> m (Maybe a) -> m a
+maybeM d m = m >>= \case
+  Just a -> pure a
+  Nothing -> d
 
 
 {-

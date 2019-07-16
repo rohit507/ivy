@@ -14,7 +14,14 @@ module Ivy.Wrappers.IntSet where
 import Ivy.Prelude hiding (IntSet)
 import qualified Data.IntSet as IS
 
-newtype IntSet v = IMW { getIntSet :: IS.IntSet }
+newtype IntSet v = ISW { getIntSet :: IS.IntSet }
+
+deriving newtype instance Semigroup (IntSet v)
+
+type N i = Newtype i Int
 
 empty :: Newtype i Int => IntSet i
-empty = IMW IS.empty
+empty = ISW IS.empty
+
+singleton :: N i => i -> IntSet i
+singleton = ISW . IS.singleton . unpack

@@ -42,12 +42,13 @@ import qualified Data.Text as Text
 --            to manipulate.
 
 -- | Constraints that terms should meet
-type Term e t = (Typeable t, JoinSemiLattice1 e t)
+type Term e t = (Typeable t, JoinSemiLattice1 e t, Traversable t, Eq1 t
+                , Show1 t)
 
 -- | Constraints that an int binding monad must meet.
 type IBM e m = (MonadError e m, BindingError e, Typeable m, Typeable e)
 
-type IBTM e t m = (Term e t, IBM e m, Show (Var t m), Typeable (Var t))
+type IBTM e t m = (Term e t, IBM e m, Show (Var t m), Typeable (Var t), Eq (Var t m))
 
 -- | This monad gives you the ability to unify terms in some unifiable language.
 class MonadBind t m => MonadUnify t m  where
@@ -203,13 +204,40 @@ type ErrorContext e = e -> e
 -- | Errors that are internal to our current library and are not due to
 --   user error.
 class BindingError e where
+
+  -- | Error thrown when our backend expects a term to be of some type, and it
+  --   isn't.
   invalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
+
+  -- | Error when we try to look up a term that doesn't exist anymore
   nonexistentTerm       :: (IBTM e t m) => Var t m -> e
+
+  -- | Error when a term we expect to be a set representative isn't
   expectedBoundState    :: (IBTM e t m) => Var t m -> e
+
+  -- | A pair of terms that we expect to be unified isn't.
+  termsNotUnified      :: (IBTM e t m, Show (t (Var t m)))
+                       => t (Var t m)
+                       -> t (Var t m)
+                       -> e
+
+  -- | Context where we're getting the Term State of a Var.
   gettingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
+
+  -- | Context where we're setting that state.
   settingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
+
+  -- | Context where we're looking up the representative of a term
   gettingRepresentativeOf :: (IBTM e t m) => Var t m -> ErrorContext e
+
+  -- | Context where we're looking a term up
   lookingUp :: (IBTM e t m) => Var t m -> ErrorContext e
+
+  -- | Context where we're attempting to unify terms
+  unifyingTerms :: (IBTM e t m) => Var t m -> Var t m -> ErrorContext e
+
+  -- | Context where we're subsuming terms
+  subsumingTerms :: (IBTM e t m) => Var t m -> Var t m -> ErrorContext e
 
 
 addErrorCtxt :: Text -> Text -> Text
@@ -225,6 +253,8 @@ instance BindingError Text where
   nonexistentTerm       :: forall t m. (IBTM Text t m) => Var t m -> Text
   nonexistentTerm v = "Could not find term `" <> showVar v <> "`."
 
+  termsNotUnified a b = "Terms should be unified `" <> show a <> "`, and `" <> show b <> "`."
+
   gettingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
   gettingTermStateOf v = addErrorCtxt $ "While getting TermState of `" <> showVar v <> "`:"
 
@@ -232,13 +262,22 @@ instance BindingError Text where
   settingTermStateOf v = addErrorCtxt $ "While setting TermState of `" <> showVar v <> "`:"
 
   gettingRepresentativeOf :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  gettingRepresentativeOf v = addErrorCtxt $ "While getting representative of `" <> showVar v <> "`:"
+  gettingRepresentativeOf v
+    = addErrorCtxt $ "While getting representative of `" <> showVar v <> "`:"
+
+
 
   lookingUp :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`."
+  lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`:"
 
+  unifyingTerms a b = addErrorCtxt $ "While unifying `" <> showVar a
+    <> "`, and `" <> showVar b <> "`:"
+
+  subsumingTerms a b = addErrorCtxt $ "While subsuming term `" <> showVar a
+    <> "`, and `" <> showVar b <> "`: "
   expectedBoundState :: forall t m. (IBTM Text t m) => Var t m -> Text
   expectedBoundState v = "Expected a BoundState when looking up `" <>showVar v <> "`."
+
 
 
 throwInvalidTypeFound :: (Typeable a, Typeable b, MonadError e m, BindingError e)
@@ -249,6 +288,8 @@ type ThrowBindErr e t m m'
   = ( Term e t
   , MonadError e m'
   , Show (Var t m')
+  , Show (t (Var t m'))
+  , Eq (Var t m')
   , Typeable (Var t)
   , Typeable m'
   , Typeable e
@@ -261,6 +302,12 @@ throwNonexistentTerm = throwError . nonexistentTerm
 
 throwExpectedBoundState :: (ThrowBindErr e t m m') => Var t m' -> m c
 throwExpectedBoundState = throwError . expectedBoundState
+
+throwTermsNotUnified :: (ThrowBindErr e t m m')
+                     => t (Var t m')
+                     -> t (Var t m')
+                     -> m c
+throwTermsNotUnified ta tb = throwError $ termsNotUnified ta tb
 
 withMonadError :: (MonadError e m) => (e -> e) -> m a -> m a
 withMonadError f v = catchError v (throwError . f)
