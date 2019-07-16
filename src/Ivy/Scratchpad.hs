@@ -349,30 +349,38 @@ getRepresentative v = getForwardingVar v >>= \case
 instance (forall e. IBTM e t m) => MonadUnify t (IntBindT m) where
 
   unify :: VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
-  unify = undefined
-    -- check if the terms are structurally equal and return result
-    -- check if the terms are unified wrt to assumptions and return result
-    -- otherwise, start merging terms layer by layer.
-       -- Bookkeeping for
-           -- Properties
-           -- forwardedSet
+  unify a b = IntBindT $ unifyT a b
 
   equals :: VarIB t m -> VarIB t m -> IntBindT m Bool
-  equals = undefined
-    -- check if terms are structurally equal
-    -- check if terms are unified wrt to assumptions
-    -- check if terms are equal wrt to assumptions.
-    -- otherwise do layer by layer equality check
+  equals a b = IntBindT $ equalsT a b
 
-
-unifyT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+-- | Unify two terms in IBRWST and return the resulting outcome.
+unifyT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 unifyT a b = do
   assumed <- (||) <$> assumeUnified a b <*>
-    ((&&) <$> assumeSubsumed a b <*> assumeSubsumed b a)
+               ((&&) <$> assumeSubsumed a b <*> assumeSubsumed b a)
   if assumed
-  then pure True
+  then pure a
   else undefined
     -- At this point we actually try to check terms and merge them.
+    -- First, see if there is a constructor level match,
+    -- If yes, then assume the current pair and unified and iterate over
+             -- children unifying them.
+    -- then update second term to point to first
+    -- return the first.
+
+-- | Check whether two terms are equivalent up to unification of various terms
+equalsT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+equalsT = undefined
+  assumed <- (||) <$> assumeEquals a b <*>
+               ((||) <$> assumeUnified a b <*>
+                 ((&&) <$> assumeSubsumed a b <*> assumeSubsumed b a))
+  if assumed
+  then pure a
+  else undefined
+    -- Check if constructor level match
+    -- if yes $ check that all subterms match, while assuming the current
+       -- subterm matches
 
 
 -- | Run some computation while assuming some things, return the
