@@ -333,14 +333,14 @@ getForwardingVar v = getTermState v >>= \case
   _ -> pure Nothing
 
 
--- | Tries to get the error corresponding to a particular term.
+--  | Tries to get the error corresponding to a particular term.
 --   Does not try to traverse the forwarding chain.
-getTermError :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (Maybe e)
-getTermError v = getTermState v >>= \case
-  (Errored _ _ te i) -> matchType @e
-     te (throwInvalidTypeFound te (typeRep @e))
-     (\ HRefl -> pure $ Just i)
-  _ -> pure Nothing
+-- getTermError :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (Maybe e)
+-- getTermError v = getTermState v >>= \case
+--  (Errored _ _ te i) -> matchType @e
+--     te (throwInvalidTypeFound te (typeRep @e))
+--     (\ HRefl -> pure $ Just i)
+--  _ -> pure Nothing
 
 -- | Finds the Representative element for a Var in our disjoint set structure.
 --
@@ -363,20 +363,19 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadUnify t (IntBindT
   equals a b = IntBindT $ equalsT a b
 
 -- | Unify two terms in IBRWST and return the resulting outcome.
-unifyT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+unifyT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 unifyT a b
   | a == b = pure a
   | otherwise = undefined
      -- check if unification assumed
-     -- check that terms are related
-     -- check that
+     -- check that terms are relatable
      -- while assuming unification
         -- unify all subterms if possible
      -- unify the last level of the r term
 
 
 -- | Check whether two terms are equivalent up to unification of various terms
-equalsT :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+equalsT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
 equalsT a b
   | a == b = pure True
   | otherwise = undefined
