@@ -132,7 +132,7 @@ data TermState where
   Bound     :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> BoundState t m -> TermState
   Forwarded :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> VarIB t m -> TermState
   -- Errored   :: (IBTM' e t m, Typeable e)
-    => TypeRep t -> TypeRep m -> TypeRep e -> e  -> TermState
+  --  => TypeRep t -> TypeRep m -> TypeRep e -> e  -> TermState
 
 -- | The state of a newly inserted free term.
 freeVarState :: forall t m. BoundState t m
@@ -158,10 +158,8 @@ deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
 deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
-
-instance (Monad m) => MonadState BindingState (IntBindT m)
-
-instance (Monad m) => MonadReader Context (IntBindT m)
+deriving newtype instance (Monad m) => MonadState BindingState (IntBindT m)
+deriving newtype instance (Monad m) => MonadReader Context (IntBindT m)
 
 instance MonadTrans IntBindT where
 
@@ -374,7 +372,7 @@ unifyT a b
      -- unify the last level of the r term
 
 
--- | Check whether two terms are equivalent up to unification of various terms
+-- | Check whether two terms are equivalent up to unification
 equalsT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
 equalsT a b
   | a == b = pure True
@@ -439,6 +437,8 @@ mergeBoundState fromVar BoundState{termValue=ftv
       Nothing -> pure t
       Just (TVar ft fm fv) -> mergeTypedVars tt tm ft fm tv fv
 
+    -- You know what, this entire thing is a bit absurd, ensuring that
+    -- three sets of terms all properly match. oh well.
     mergeTypedVars ::forall ta ma tb mb e' e''.
                    (Typeable ta, Typeable ma, Typeable tb
                    ,Typeable mb, IBTM' e' ta ma, IBTM' e'' tb mb)
@@ -460,10 +460,6 @@ mergeBoundState fromVar BoundState{termValue=ftv
     mergeForwarded f t = pure $ f <> t <> IS.singleton fromVar
 
     mergeSubsumed f t = pure $ f <> t
-
-
-  -- Ensure that a and b are both bound states / representatives
-  -- if they are
 
 -- | Run some computation while assuming some things, return the
 --   result of that computation and which of the assumptions were triggered.
@@ -544,7 +540,9 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
   --        filter step by step, or what.
   subsume :: VarIB t m -> VarIB t m -> IntBindT m ()
   subsume = undefined
-    -- check equality and assumptions
+    -- check assumptions
+       -- For unification or subsumption
+    -- check if they mutually subsume
     -- add subsumption relationship to initial term
     -- mark as dirty
 
@@ -554,6 +552,7 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
     -- check equality and unity assumptions
     -- check subsume assumptions
     -- check layer by layer subsumption.
+       -- TODO :: unclear how to do.
 
 
 -- | Checks whether one term is subsumed by another in our assumptions.

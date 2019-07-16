@@ -81,11 +81,15 @@ class (Eq p, Ord p, Hashable p) => Property p t t' | p -> t, p -> t'
 --   NOTE: A very important note is that when you unify two terms with the same
 --         property then the terms those properties point to will also be
 --         unified!
+--
+--   NOTE: Properties are expected to be phantom types with no instances.
+--         maybe that'll change later but for now they're singletons.
 class MonadProperty p m where
 
   -- | Retrieve the term re
   propertyOf :: (Property p t t', MonadBind t m, MonadBind t' m)
-             => p -> Var t m -> m (Var t' m)
+             => Var t m -> m (Var t' m)
+
 
 {-
 -- | Lets you define how unification works for some specific type of term.
@@ -264,8 +268,6 @@ instance BindingError Text where
   gettingRepresentativeOf :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
   gettingRepresentativeOf v
     = addErrorCtxt $ "While getting representative of `" <> showVar v <> "`:"
-
-
 
   lookingUp :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
   lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`:"
