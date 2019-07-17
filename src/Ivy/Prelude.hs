@@ -14,6 +14,7 @@ module Ivy.Prelude (
   , listens
   , censor
   , maybeM
+  , liftEither
 ) where
 
 import Intro as P
@@ -32,6 +33,9 @@ import Control.Newtype as P
 import GHC.Exts as P (fromListN)
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
+
+liftEither :: MonadError e m => Either e a -> m a
+liftEither = either throwError pure
 
 -- | Will modify an error if one is thrown, but otherwise leave it alone.
 modifyError :: (MonadError e m) => (e -> e) -> m a -> m a

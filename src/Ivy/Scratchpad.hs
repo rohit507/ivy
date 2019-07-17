@@ -48,6 +48,7 @@ data TypedVar where
 type instance TM.Item RelMap t = TypedVar
 
 -- | Reader Monad Info
+
 data Context where
   Context :: (Monad m, Typeable m) => {
     monadType :: TypeRep m
@@ -59,6 +60,7 @@ data Context where
 type IBTM' e t m = (IBTM e t m, Show (t (VarIB t m)))
 
 -- | General config info that only needs to be set once.
+
 data Config m = Config {
     -- | How many times do we try to unify a single pair of elements before
     --   giving up hope that it will ever quiesce.
@@ -84,6 +86,7 @@ data Config m = Config {
 --
 --   In the writer slot, this allows for one to get those assumptions which
 --   were hit when this process happened.
+
 data Assuming = Assuming {
     -- | Assumption that a pair of terms are unified.
     unified :: HashSet (ETID,ETID)
@@ -107,6 +110,7 @@ instance Monoid Assuming where
   mempty = Assuming mempty mempty mempty
 
 -- | Runtime state of our term-graph thing.
+
 data BindingState = BindingState {
      -- | Term Specific Information.
      termData :: IntMap ETermID TermState
@@ -115,6 +119,7 @@ data BindingState = BindingState {
 type BoundStateIB t m = BoundState t (IntBindT m)
 
 -- | The state for a bound term, with type information
+
 data BoundState t m = BoundState {
        termValue :: Maybe (t (VarID t m))
      -- | Relations from this term to other terms
@@ -128,6 +133,7 @@ data BoundState t m = BoundState {
      }
 
 -- | The unique state information we store for each term.
+
 data TermState where
   Bound     :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> BoundState t m -> TermState
   Forwarded :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> VarIB t m -> TermState
@@ -309,6 +315,7 @@ getBoundState v = getTermState v >>= \case
   _ -> throwExpectedBoundState v
 
 -- | Sets the boundState of a trm
+
 setBoundState :: forall t m e. (IBTM' e t m) => VarIB t m -> BoundStateIB t m -> IBRWST m ()
 setBoundState v = modifyTermState v . const . pure . Bound typeRep typeRep
 
@@ -357,28 +364,42 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadUnify t (IntBindT
   unify :: VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
   unify a b = IntBindT $ unifyT a b
 
-  equals :: VarIB t m -> VarIB t m -> IntBindT m Bool
-  equals a b = IntBindT $ equalsT a b
+  -- equals :: VarIB t m -> VarIB t m -> IntBindT m Bool
+  -- equals a b = IntBindT $ equalsT a b
+
 
 -- | Unify two terms in IBRWST and return the resulting outcome.
-unifyT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+unifyT :: forall t m e.  (IBTM' e t m)
+       => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 unifyT a b
   | a == b = pure a
-  | otherwise = undefined
-     -- check if unification assumed
-     -- check that terms are relatable
-     -- while assuming unification
-        -- unify all subterms if possible
-     -- unify the last level of the r term
+  | otherwise = do
+      a' <- getRepresentative a
+      b' <- getRepresentative b
+      if ((a /= a') || (b /= b'))
+      then unifyT a' b'
+      else do
+        mtva <- termValue <$> getBoundState a'
+        mtvb <- termValue <$> getBoundState b'
+        let a'' = flattenVID a'
+            b'' = flattenVID b'
 
+        case (mtva, mtvb) of
+          (Just tva, Just tvb) -> do
+             eetv <- map fst $ withAssumption (a'' `IsUnifiedWith` b'') $
+                                 liftLatJoin @e unifyT tva tvb
+             tv <- liftEither eetv
+             modifyBoundState b' (\ s -> pure s{termValue=Just tv})
+          _ -> skip -- At least one term is free, we don't need to recurse.
 
--- | Check whether two terms are equivalent up to unification
+        unifyLevel a' b'
+
+{-- | Check whether two terms are equivalent up to unification
 equalsT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
 equalsT a b
   | a == b = pure True
   | otherwise = undefined
-    -- Check if unification or requality assumed
-    --
+    -- Check if unification or requality assumed -}
 
 -- | Unifies a single level of terms, with the assumption that they are both
 --   representatives of their category, and that all their subterms are properly
@@ -394,6 +415,9 @@ forwardTo :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 forwardTo from to = do
   modifyTermState from (const . pure $ Forwarded typeRep typeRep to)
   pure to
+
+
+
 
 -- | Merge two bound states if possible. Can trigger unification of relations.
 --   will verify that subterms are properly unified.
@@ -546,14 +570,17 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
     -- add subsumption relationship to initial term
     -- mark as dirty
 
-  subsumes :: VarIB t m -> VarIB t m -> IntBindT m Bool
-  subsumes = undefined
+  -- subsumes :: VarIB t m -> VarIB t m -> IntBindT m Bool
+  -- subsumes = undefined
     -- Check structuralEquality
     -- check equality and unity assumptions
     -- check subsume assumptions
     -- check layer by layer subsumption.
        -- TODO :: unclear how to do.
 
+
+subsumeT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m ()
+subsumeT lt gt = undefined
 
 -- | Checks whether one term is subsumed by another in our assumptions.
 assumeSubsumed :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool

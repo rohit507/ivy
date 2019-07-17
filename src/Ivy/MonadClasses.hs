@@ -58,7 +58,7 @@ class MonadBind t m => MonadUnify t m  where
 
   -- | Tells us whether two terms have been unified. Does not change
   --   the state of the update, just return information.
-  equals :: (Term e t, IBM e m) => Var t m -> Var t m -> m Bool
+  -- equals :: (Term e t, IBM e m) => Var t m -> Var t m -> m Bool
 
   -- TODO :: I'm not confident that we want an equiv operation since
   --        that may break the upwards closed nature of our various operations
@@ -132,7 +132,7 @@ class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
   subsume :: Var t m -> Var t m -> m ()
 
   -- | Asks whether the first variable is <= the second
-  subsumes :: Var t m -> Var t m -> m Bool
+  -- subsumes :: Var t m -> Var t m -> m Bool
 
 
 
