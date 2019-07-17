@@ -25,3 +25,12 @@ empty = ISW IS.empty
 
 singleton :: N i => i -> IntSet i
 singleton = ISW . IS.singleton . unpack
+
+toList :: N i => IntSet i -> [i]
+toList (ISW s) = map pack $ IS.toList s
+
+fromList :: N i => [i] -> IntSet i
+fromList = ISW . IS.fromList . map unpack
+
+member :: N i => i -> IntSet i -> Bool
+member i (ISW s) = IS.member (unpack i) s

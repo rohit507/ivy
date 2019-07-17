@@ -376,23 +376,23 @@ unifyT a b
   | otherwise = do
       a' <- getRepresentative a
       b' <- getRepresentative b
-      if ((a /= a') || (b /= b'))
-      then unifyT a' b'
-      else do
-        mtva <- termValue <$> getBoundState a'
-        mtvb <- termValue <$> getBoundState b'
-        let a'' = flattenVID a'
-            b'' = flattenVID b'
+      ifM (assumeUnified a' b') (pure b) $ -- Don't want to loop.
+        if ((a /= a') || (b /= b'))
+        then unifyT a' b'
+        else do
+          mtva <- termValue <$> getBoundState a'
+          mtvb <- termValue <$> getBoundState b'
+          let a'' = flattenVID a'
+              b'' = flattenVID b'
+          case (mtva, mtvb) of
+            (Just tva, Just tvb) -> do
+               eetv <- map fst $ withAssumption (a'' `IsUnifiedWith` b'') $
+                                   liftLatJoin @e unifyT tva tvb
+               tv <- liftEither eetv
+               modifyBoundState b' (\ s -> pure s{termValue=Just tv})
+            _ -> skip -- At least one term is free, we don't need to do much here.
 
-        case (mtva, mtvb) of
-          (Just tva, Just tvb) -> do
-             eetv <- map fst $ withAssumption (a'' `IsUnifiedWith` b'') $
-                                 liftLatJoin @e unifyT tva tvb
-             tv <- liftEither eetv
-             modifyBoundState b' (\ s -> pure s{termValue=Just tv})
-          _ -> skip -- At least one term is free, we don't need to recurse.
-
-        unifyLevel a' b'
+          unifyLevel a' b'
 
 {-- | Check whether two terms are equivalent up to unification
 equalsT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
@@ -563,7 +563,7 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
   -- TODO :: Okay so the question is how do we properly recurse? do we
   --        filter step by step, or what.
   subsume :: VarIB t m -> VarIB t m -> IntBindT m ()
-  subsume = undefined
+  subsume a b = IntBindT $ subsumeT a b *> skip
     -- check assumptions
        -- For unification or subsumption
     -- check if they mutually subsume
@@ -579,8 +579,34 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
        -- TODO :: unclear how to do.
 
 
-subsumeT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m ()
-subsumeT lt gt = undefined
+-- | This just subsumes one term to another on a one off basis.
+--
+--   TODO :: Clean this up, it's too imperative.
+subsumeT :: forall t m e. (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+subsumeT a b
+  | a == b = pure a
+  | otherwise = do
+     a' <- getRepresentative a
+     b' <- getRepresentative b
+     ifM (assumeSubsumed a' b' ||^ assumeUnified a' b') (pure b) $ -- Don't want to loop.
+       if ((a /= a') || (b /= b'))
+       then subsumeT a' b'
+       else do
+         ifM (b' `hasSubsumed` a) (unifyT a' b') $ do
+           mtva <- termValue <$> getBoundState a'
+           mtvb <- termValue <$> getBoundState b'
+           let a'' = flattenVID a'
+               b'' = flattenVID b'
+           case (mtva, mtvb) of
+             (Just tva, Just tvb) -> do
+                eetv <- map fst $ withAssumption (a'' `IsSubSumedBy` b'') $
+                                    liftLatJoin @e subsumeT tva tvb
+                tv <- liftEither eetv
+                modifyBoundState b' (\ s -> pure s{termValue=Just tv,dirty=True})
+             _ -> skip -- At least one term is free, we don't need to do much here.
+           modifyBoundState a' (\ s@BoundState{subsumedTerms=subs} ->
+                     pure s{subsumedTerms=subs <> IS.singleton b'})
+           pure b'
 
 -- | Checks whether one term is subsumed by another in our assumptions.
 assumeSubsumed :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
@@ -590,15 +616,20 @@ assumeSubsumed v v' = do
   when res . tell $ mempty{subsumed=HS.singleton pair}
   pure res
 
+-- | Checks whether a is marked as a subsumed term of b
+hasSubsumed :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
+hasSubsumed a b = do
+  a' <- getRepresentative a
+  b' :: VarIB t m <- getRepresentative b
+  tis <- subsumedTerms <$> getBoundState a'
+  let tl = IS.toList tis
+  tl' <- traverse getRepresentative tl
+  let tl'' = IS.fromList tl'
+  modifyBoundState a' (\ s -> pure s{subsumedTerms=tl''})
+  pure $ IS.member b' tl''
+
 data TV t v = T (t (TV t v)) | V v
 
--- | Actually performs the subsumption operation while keeping track
---   of the set of currently assumed subsumptions that are required
---   for the operation to succeed
-performSubsume :: VarIB t m -> VarIB t m -> IntBindT m ()
-performSubsume = undefined
-  -- Add assumption of these terms being subsumed.
-  -- subsume single layer of terms by lifting subsume with the JoinSemiLattice
 
 instance (Typeable p, Typeable m) => MonadProperty p (IntBindT m) where
 
