@@ -673,7 +673,7 @@ bindHandle :: (Monad m) => Handler m a -> (a -> Handler m b) -> Handler m b
 bindHandle (Watch s vs a) f = Run s $ do
    f <$> a >>= \case
      Fin -> pure Fin
-     (Watch _ nvs na) -> pure $ Watch (hasWithSalt s nvs s) (vs <> nvs) (a *> na)
+     (Watch _ nvs na) -> pure $ Watch (hashWithSalt s nvs s) (vs <> nvs) (a *> na)
      (Run _ m) -> m
 bindHandle (Run s m) f = Run s $ f <$> m
 bindHandle Fin _ = Fin
