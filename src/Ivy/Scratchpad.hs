@@ -215,6 +215,8 @@ instance (forall e.
   bindVar :: VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
   bindVar v t = IntBindT $ bindVarT v t
 
+-- | Performs updates to the term that can get rid of dirty flags if needed
+
 -- | Generate a new internal identifier of some type.
 --
 --   First type parameter is the output ident type.
@@ -345,7 +347,6 @@ modifyBoundState v f = do
   bs' <- f bs
   when (bs /= bs') $ setTermState v (Bound typeRep typeRep bs'{dirty=True})
 
-hasBoundStateChanged
 
 -- | Potentially gets a forwarded var for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
@@ -661,3 +662,21 @@ instance (MonadError e (IntBindT m), MonadAttempt m) => MonadAttempt (IntBindT m
   attempt = defaultLiftAttempt
               (\ (a,s,w) -> (((),s,w),a))
               (\ (((),s,w), a) -> (a,s,w))
+
+data Handler m a where
+  Watch  ::{salt :: Int , watching :: [TypedVar]
+              , action :: m (Handler m a) } -> Handler m a
+  Run :: Int -> m (Handler m a) -> Handler m a
+  Fin :: Handler m a
+
+bindHandle :: (Monad m) => Handler m a -> (a -> Handler m b) -> Handler m b
+bindHandle (Watch s vs a) f = Run s $ do
+   f <$> a >>= \case
+     Fin -> pure Fin
+     (Watch _ nvs na) -> pure $ Watch (hasWithSalt s nvs s) (vs <> nvs) (a *> na)
+     (Run _ m) -> m
+bindHandle (Run s m) f = Run s $ f <$> m
+bindHandle Fin _ = Fin
+
+-- We can keep track of handler by assigning a unique init. Or we just
+-- ... I dunno, keeping track of  salt or something?
