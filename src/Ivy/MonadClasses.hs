@@ -74,7 +74,8 @@ class MonadBind t m => MonadUnify t m  where
 
 -- | A property is a many-to-one relationship between two terms of potentially
 --   different types.
-class (Eq p, Ord p, Hashable p) => Property p t t' | p -> t, p -> t'
+class (Eq p, Ord p, Hashable p, Typeable p)
+   => Property p (t :: Type -> Type) (t' :: Type -> Type) | p -> t, p -> t'
 
 -- | A binding monad that can support property relations between terms.
 --
@@ -84,11 +85,12 @@ class (Eq p, Ord p, Hashable p) => Property p t t' | p -> t, p -> t'
 --
 --   NOTE: Properties are expected to be phantom types with no instances.
 --         maybe that'll change later but for now they're singletons.
-class MonadProperty p m where
+
+class (Property p t t', MonadBind t m, MonadBind t' m)
+   => MonadProperty p t t' m where
 
   -- | Retrieve the term re
-  propertyOf :: (Property p t t', MonadBind t m, MonadBind t' m)
-             => Var t m -> m (Var t' m)
+  propertyOf :: Var t m -> m (Var t' m)
 
 
 {-
@@ -108,7 +110,7 @@ class Unifiable e t where
 -}
 
 -- | Monads that allow you to bind variables to terms.
-class MonadBind t m where
+class (Show (t (Var t m))) => MonadBind t m where
 
   -- | This is a variable that has a unifiable term associated with it.
   type Var t = (r :: (Type -> Type) -> Type) | r -> t
@@ -133,9 +135,6 @@ class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
 
   -- | Asks whether the first variable is <= the second
   -- subsumes :: Var t m -> Var t m -> m Bool
-
-
-
 
 
 -- | A class for monads that can attempt a computation and if that computation
@@ -243,6 +242,8 @@ class BindingError e where
   -- | Context where we're subsuming terms
   subsumingTerms :: (IBTM e t m) => Var t m -> Var t m -> ErrorContext e
 
+  gettingPropertyOf :: (IBTM e t m, Property p t t')
+    => Var t m -> TypeRep p -> ErrorContext e
 
 addErrorCtxt :: Text -> Text -> Text
 addErrorCtxt ctxt = Text.unlines . (ctxt :) . map (Text.append "  ") . Text.lines
@@ -280,6 +281,8 @@ instance BindingError Text where
   expectedBoundState :: forall t m. (IBTM Text t m) => Var t m -> Text
   expectedBoundState v = "Expected a BoundState when looking up `" <>showVar v <> "`."
 
+  gettingPropertyOf v p = addErrorCtxt $ "While getting property `" <> show p
+    <> "` of `" <> show v <> "`."
 
 
 throwInvalidTypeFound :: (Typeable a, Typeable b, MonadError e m, BindingError e)
@@ -325,3 +328,14 @@ whileGettingRepresentativeOf = withMonadError . gettingRepresentativeOf
 
 whileLookingUp :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
 whileLookingUp = withMonadError . lookingUp
+
+whileUnifyingTerms :: (ThrowBindErr e t m m') => Var t m' -> Var t m' -> m a -> m a
+whileUnifyingTerms a b = withMonadError $ unifyingTerms a b
+
+whileSubsumingTerms :: (ThrowBindErr e t m m') => Var t m' -> Var t m' -> m a -> m a
+whileSubsumingTerms a b = withMonadError $ subsumingTerms a b
+
+whileGettingPropertyOf :: (ThrowBindErr e t m m'
+                         , Property p t t')
+                         => Var t m' -> TypeRep p -> m a -> m a
+whileGettingPropertyOf v p = withMonadError $ gettingPropertyOf v p

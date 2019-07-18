@@ -112,6 +112,7 @@ ghc-options:
   # Some of the flags enabled by Wall and propmoted by Werror really should
   # only be warnings when developing. A proper build on the other hand should
   # have no warnings attached
+  - -Wwarn=name-shadowing
   - -Wwarn=redundant-constraints
   - -Wwarn=unused-matches
   - -Wwarn=deprecations

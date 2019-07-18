@@ -47,9 +47,6 @@ data TypedVar where
   TVar :: (IBTM' e t m) => TypeRep t -> TypeRep m -> VarIB t m -> TypedVar
 type instance TM.Item RelMap t = TypedVar
 
-tVar :: forall t m e. (IBTM' e t m) => VarIB t m -> TypedVar
-tVar = TVar (typeRep @t) (typeRep @m)
-
 -- | Reader Monad Info
 
 data Context where
@@ -60,7 +57,7 @@ data Context where
   } -> Context
 
 
-type IBTM' e t m = (IBTM e t m, MonadBind t (IntBindT m))
+type IBTM' e t m = (IBTM e t m)
 
 -- | General config info that only needs to be set once.
 
@@ -294,7 +291,7 @@ validateTermStateType _ st = case st of
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
 getTermState :: (IBTM' e t m) => VarIB t m -> IBRWST m TermState
-getTermState v = whileGettingTermStateOf v $ do
+getTermState v = do
   td <- termData <$> get
   case IM.lookup (flattenVID v) td of
     Nothing -> throwNonexistentTerm v
@@ -306,7 +303,7 @@ getTermState v = whileGettingTermStateOf v $ do
 --      merge the errors, otherwise trying to set an errored term should be
 --      a nop
 setTermState :: (IBTM' e t m) => VarIB t m -> TermState -> IBRWST m ()
-setTermState var term = whileSettingTermStateOf var $ do
+setTermState var term = do
   validateTermStateType var term
   modify (\ b -> b{termData = IM.insert (flattenVID var) term $ termData b})
 
@@ -332,20 +329,15 @@ getBoundState v = getTermState v >>= \case
 -- | Sets the boundState of a trm
 
 setBoundState :: forall t m e. (IBTM' e t m) => VarIB t m -> BoundStateIB t m -> IBRWST m ()
-setBoundState v n = modifyBoundState v (const . pure n)
+setBoundState v = modifyTermState v . const . pure . Bound typeRep typeRep
 
--- | Modifies the bound state of a term, automatically dirties term if
---   there's a change.
+-- | Modifies the bound state of a term
 modifyBoundState :: forall t m e. (IBTM' e t m)
                  => VarIB t m
                  -> (BoundStateIB t m -> IBRWST m (BoundStateIB t m))
                  -> IBRWST m ()
-modifyBoundState v f = do
-  bs <- getBoundState v
-  bs' <- f bs
-  when (bs /= bs') $ setTermState v (Bound typeRep typeRep bs'{dirty=True})
-
-hasBoundStateChanged
+modifyBoundState v f =
+  getBoundState v >>= map (Bound typeRep typeRep) . f >>= setTermState v
 
 -- | Potentially gets a forwarded var for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
@@ -372,7 +364,7 @@ getForwardingVar v = getTermState v >>= \case
 --   Element returned should always be an Error or a Bound Term.
 --   Forwards paths as needed.
 getRepresentative :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (VarIB t m)
-getRepresentative v = whileGettingRepresentativeOf v $ getForwardingVar v >>= \case
+getRepresentative v = getForwardingVar v >>= \case
   Nothing -> pure v
   Just v' -> do
     v'' <- getRepresentative v'
@@ -393,7 +385,7 @@ unifyT :: forall t m e.  (IBTM' e t m)
        => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 unifyT a b
   | a == b = pure a
-  | otherwise = whileUnifyingTerms a b $ do
+  | otherwise = do
       a' <- getRepresentative a
       b' <- getRepresentative b
       ifM (assumeUnified a' b') (pure b) $ -- Don't want to loop.
@@ -462,7 +454,7 @@ mergeBoundState fromVar BoundState{termValue=ftv
     matchTerms Nothing a = pure a
     matchTerms a Nothing = pure a
     matchTerms (Just ftv) (Just ttv) = do
-      canonFTV <- traverse (getRepresentative @t @m @e) ftv
+      canonFTV <- traverse getRepresentative ftv
       canonTTV <- traverse getRepresentative ttv
       when (not $ liftEq (==) canonFTV  canonTTV)
         $ throwTermsNotUnified canonFTV canonTTV
@@ -579,6 +571,11 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
   --        filter step by step, or what.
   subsume :: VarIB t m -> VarIB t m -> IntBindT m ()
   subsume a b = IntBindT $ subsumeT a b *> skip
+    -- check assumptions
+       -- For unification or subsumption
+    -- check if they mutually subsume
+    -- add subsumption relationship to initial term
+    -- mark as dirty
 
   -- subsumes :: VarIB t m -> VarIB t m -> IntBindT m Bool
   -- subsumes = undefined
@@ -588,13 +585,14 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
     -- check layer by layer subsumption.
        -- TODO :: unclear how to do.
 
+
 -- | This just subsumes one term to another on a one off basis.
 --
 --   TODO :: Clean this up, it's too imperative.
 subsumeT :: forall t m e. (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
 subsumeT a b
   | a == b = pure a
-  | otherwise = whileSubsumingTerms a b $ do
+  | otherwise = do
      a' <- getRepresentative a
      b' <- getRepresentative b
      ifM (assumeSubsumed a' b' ||^ assumeUnified a' b') (pure b) $ -- Don't want to loop.
@@ -609,8 +607,7 @@ subsumeT a b
                 eetv <- map fst $ withAssumption (a' `isSubsumedBy` b') $
                                     liftLatJoin @e subsumeT tva tvb
                 tv <- liftEither eetv
-                -- We only need to modify the subsumed term
-                modifyBoundState b' (\ s -> pure s{termValue=Just tv})
+                modifyBoundState b' (\ s -> pure s{termValue=Just tv,dirty=True})
              _ -> skip -- At least one term is free, we don't need to do much here.
            modifyBoundState a' (\ s@BoundState{subsumedTerms=subs} ->
                      pure s{subsumedTerms=subs <> IS.singleton b'})
@@ -636,24 +633,27 @@ hasSubsumed a b = do
   modifyBoundState a' (\ s -> pure s{subsumedTerms=tl''})
   pure $ IS.member b' tl''
 
-instance (Property p t t', IBTM' e t m, IBTM' e t' m)
-       => MonadProperty p t t' (IntBindT m) where
+instance (Typeable p, Typeable m) => MonadProperty p (IntBindT m) where
 
-  propertyOf :: VarIB t m -> IntBindT m (VarIB t' m)
-  propertyOf v = IntBindT . whileGettingPropertyOf v (typeRep @p) $ do
-    v' :: VarIB t m <- getRepresentative v
-    tm :: TypeMap RelMap <- relations <$> getBoundState v'
-    case TM.lookup (typeRep @p) tm of
-      Nothing -> do
-        nv :: VarIB t' m <- freeVarT
-        modifyBoundState v' (\ b@BoundState{relations=rl} ->
-              pure b{relations= TM.insert (typeRep @p) (tVar nv) rl})
-        pure nv
-      Just (TVar tt tm nv) -> matchType2 @t' @m
-        tt (throwInvalidTypeFound tt (typeRep @t'))
-        tm (throwInvalidTypeFound tm (typeRep @m))
-        (\ HRefl HRefl -> pure nv)
+  propertyOf :: forall t t' e e'.
+             (Property p t t', IBTM e t m, IBTM e' t' m, e ~ e')
+             => VarIB t m -> IntBindT m (VarIB t' m)
+  propertyOf v = IntBindT $ propertyOfT @p @e v
 
+    -- Check if a property exists in the corresponding term
+    -- If no, then create a freeVar and assign it to that property
+    -- if yes, then get the term pointed to by the property in the map.
+
+propertyOfT :: forall p e t t' m. (IBTM' e t m, IBTM' e t' m, Property p t t')
+           => VarIB t m -> IBRWST m (VarIB t' m)
+propertyOfT v = do
+  v' :: VarIB t m <- getRepresentative v
+  tm :: TypeMap RelMap <- relations <$> getBoundState v'
+  case TM.lookup (typeRep @p) tm of
+    Nothing -> do
+      nv :: VarIB t' m <-  freeVarT
+      modifyBoundState v' (\ b@BoundState{relations=rl} ->
+            pure b{relations= TM.insert (typeRep @p) ( nv) rl})
 
 instance (MonadError e (IntBindT m), MonadAttempt m) => MonadAttempt (IntBindT m) where
 
