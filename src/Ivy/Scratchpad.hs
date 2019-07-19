@@ -147,6 +147,7 @@ data BoundState t m = BoundState {
      , dirty :: !Bool
      }
 
+
 -- | The unique state information we store for each term.
 
 data TermState where
@@ -334,7 +335,7 @@ getBoundState v = getTermState v >>= \case
 -- | Sets the boundState of a trm
 
 setBoundState :: forall t m e. (IBTM' e t m) => VarIB t m -> BoundStateIB t m -> IBRWST m ()
-setBoundState v n = modifyBoundState v (const . pure n)
+setBoundState v n = modifyBoundState v (\ _ -> pure n)
 
 -- | Modifies the bound state of a term, automatically dirties term if
 --   there's a change.
@@ -347,6 +348,12 @@ modifyBoundState v f = do
   bs' <- f bs
   when (bs /= bs') $ setTermState v (Bound typeRep typeRep bs'{dirty=True})
 
+-- | Checks whether two bound states are semantically different
+isBoundStateUpdated :: forall t m e. (IBTM' e t m)
+                    => BoundStateIB t m
+                    -> BoundStateIB t m
+                    -> IBRWST m Bool
+isBoundStateUpdated = undefined
 
 -- | Potentially gets a forwarded var for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
@@ -435,8 +442,28 @@ forwardTo from to = do
   modifyTermState from (const . pure $ Forwarded typeRep typeRep to)
   pure to
 
+-- | Getting the latest version of a term, by updating all its member variables.
+freshenTerm :: forall e t m. (IBTM' e t m)
+              => t (VarIB t m)
+              -> IBRWST m (t (VarIB t m))
+freshenTerm = traverse getRepresentative
+
+-- | If terms are functionally identical, merge them into a new entry.
+equalizeTerms :: forall e t m. (IBTM' e t m)
+              => t (VarIB t m)
+              -> t (VarIB t m)
+              -> IBRWST m (Maybe (t (VarIB t m)))
+equalizeTerms ta tb = do
+  ta' <- freshenTerm ta
+  tb' <- freshenTerm tb
+  pure $ if (not $ liftEq (==) ta' tb')
+         then Just ta
+         else Nothing
+
 -- | Merge two bound states if possible. Can trigger unification of relations.
 --   will verify that subterms are properly unified.
+--
+--   TODO :: Modify so that relations aren't automatically unified.
 mergeBoundState :: forall e t m. (IBTM' e t m)
                 => VarIB t m -- ^ from
                 -> BoundStateIB t m -- ^ from
@@ -462,12 +489,9 @@ mergeBoundState fromVar BoundState{termValue=ftv
 
     matchTerms Nothing a = pure a
     matchTerms a Nothing = pure a
-    matchTerms (Just ftv) (Just ttv) = do
-      canonFTV <- traverse (getRepresentative @t @m @e) ftv
-      canonTTV <- traverse getRepresentative ttv
-      when (not $ liftEq (==) canonFTV  canonTTV)
-        $ throwTermsNotUnified canonFTV canonTTV
-      pure $ Just canonTTV
+    matchTerms (Just ftv) (Just ttv) = equalizeTerms @e @t @m ftv ttv >>= \case
+      Nothing ->  throwTermsNotUnified ftv ttv
+      a -> pure a
 
     mergeRels :: TypeMap RelMap -> IBRWST m (TypeMap RelMap)
     mergeRels tr = TM.traverse mergeRelMap tr
@@ -605,8 +629,13 @@ subsumeT a b
          ifM (b' `hasSubsumed` a) (unifyT a' b') $ do
            mtva <- termValue <$> getBoundState a'
            mtvb <- termValue <$> getBoundState b'
-           case (mtva, mtvb) of
-             (Just tva, Just tvb) -> do
+           case mtva of
+             (Just tva) -> do
+                tvb <- case mtvb of
+                  Just tvb -> pure tvb
+                  -- If the result term is free, then we can just fill the
+                  -- current term with free variables.
+                  Nothing -> traverse (\ _ -> freeVarT) tva
                 eetv <- map fst $ withAssumption (a' `isSubsumedBy` b') $
                                     liftLatJoin @e subsumeT tva tvb
                 tv <- liftEither eetv
