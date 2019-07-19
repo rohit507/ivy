@@ -86,10 +86,15 @@ class JoinSemiLattice1 e l where
   --   occur when joining subterms indiscriminately. There are
   --   cases where not propagating an error is the correct choice,
   --   but those will be looked at later.
+  --
+  --   NOTE :: We force you to use the join operation non-commutatively
+  --          because we might need to handle each input differently.
   liftLatJoin   :: (Monad m)
                 -- | The join operation we are lifting into 'l'
-                => (p -> p -> m p)
-                -> l p -> l p -> m (Either e (l p))
+                => (a -> m c)
+                -> (b -> m c)
+                -> (a -> b -> m c)
+                -> l a -> l b -> m (Either e (l c))
 
 
 class MeetSemiLattice1 l where

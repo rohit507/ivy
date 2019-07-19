@@ -413,7 +413,7 @@ unifyT a b
           case (mtva, mtvb) of
             (Just tva, Just tvb) -> do
                eetv <- map fst $ withAssumption (a' `isUnifiedWith` b') $
-                                   liftLatJoin @e unifyT tva tvb
+                                   liftLatJoin @e pure pure unifyT tva tvb
                tv <- liftEither eetv
                modifyBoundState b' (\ s -> pure s{termValue=Just tv})
             _ -> skip -- At least one term is free, we don't need to do much here.
@@ -462,8 +462,6 @@ equalizeTerms ta tb = do
 
 -- | Merge two bound states if possible. Can trigger unification of relations.
 --   will verify that subterms are properly unified.
---
---   TODO :: Modify so that relations aren't automatically unified.
 mergeBoundState :: forall e t m. (IBTM' e t m)
                 => VarIB t m -- ^ from
                 -> BoundStateIB t m -- ^ from
@@ -637,7 +635,7 @@ subsumeT a b
                   -- current term with free variables.
                   Nothing -> traverse (\ _ -> freeVarT) tva
                 eetv <- map fst $ withAssumption (a' `isSubsumedBy` b') $
-                                    liftLatJoin @e subsumeT tva tvb
+                                    liftLatJoin @e pure pure subsumeT tva tvb
                 tv <- liftEither eetv
                 -- We only need to modify the subsumed term
                 modifyBoundState b' (\ s -> pure s{termValue=Just tv})
@@ -692,20 +690,57 @@ instance (MonadError e (IntBindT m), MonadAttempt m) => MonadAttempt (IntBindT m
               (\ (a,s,w) -> (((),s,w),a))
               (\ (((),s,w), a) -> (a,s,w))
 
-data Handler m a where
-  Watch  ::{salt :: Int , watching :: [TypedVar]
-              , action :: m (Handler m a) } -> Handler m a
-  Run :: Int -> m (Handler m a) -> Handler m a
-  Fin :: Handler m a
+data Rule m a
 
-bindHandle :: (Monad m) => Handler m a -> (a -> Handler m b) -> Handler m b
-bindHandle (Watch s vs a) f = Run s $ do
-   f <$> a >>= \case
-     Fin -> pure Fin
-     (Watch _ nvs na) -> pure $ Watch (hashWithSalt s nvs s) (vs <> nvs) (a *> na)
-     (Run _ m) -> m
-bindHandle (Run s m) f = Run s $ f <$> m
-bindHandle Fin _ = Fin
+type RuleTM t m = (
+  Show (t (Var t (Rule m)))
+  )
 
--- We can keep track of handler by assigning a unique init. Or we just
--- ... I dunno, keeping track of  salt or something?
+instance (MonadBind t m
+         , RuleTM t m
+         ) => MonadBind t (Rule m)
+
+instance (MonadUnify t m
+         , RuleTM t m
+         ) => MonadUnify t (Rule m)
+
+instance (MonadSubsume t m
+         , RuleTM t m
+         ) => MonadSubsume t (Rule m)
+
+instance (MonadProperty p t t' m
+         , RuleTM t m
+         , RuleTM t' m
+         ) => MonadProperty p t t' (Rule m)
+
+class MonadRule m where
+
+  addRule :: (MonadBind t m) => Var t m -> (Var t m -> Rule m ()) -> m ()
+
+instance MonadRule (IntBindT m) where
+
+  addRule v r = undefined
+
+
+addRuleT :: ()
+         => VarIB t m -> (VarIB t m -> Rule (IntBindT m) ()) -> IBRWST m ()
+addRuleT = undefined
+
+runRuleT :: ()
+         => Rule (IntBindT m) () -> IBRWST m ()
+runRuleT = undefined
+
+liftAddRule :: (MonadTransControl mt, MonadRule m)
+            => (Var t (mt m) -> Rule (mt m) ()) -> mt m ()
+liftAddRule = undefined
+
+-- | Foo (\ a -> (b :+$ c) <- match a
+--               guard $ b == c
+--               set a (2 :*$ b))
+--
+--  add the handler to all potential terms
+--    -- It'll match on !e = !d + !f
+--    --   Will fail since !d != !f
+--    -- Match on !g = !h + !h
+--    --   Will pass guard, match on !g (again, and run its payload?)
+--    --   Nah -- Is a problem

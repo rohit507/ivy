@@ -93,6 +93,7 @@ class (Property p t t', MonadBind t m, MonadBind t' m)
   propertyOf :: Var t m -> m (Var t' m)
 
 
+
 {-
 -- | Lets you define how unification works for some specific type of term.
 --
@@ -113,7 +114,7 @@ class Unifiable e t where
 class (Show (t (Var t m))) => MonadBind t m where
 
   -- | This is a variable that has a unifiable term associated with it.
-  type Var t = (r :: (Type -> Type) -> Type) | r -> t
+  type Var t = (r :: Type) | r -> t
 
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
