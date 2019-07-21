@@ -114,7 +114,7 @@ class Unifiable e t where
 class (Show (t (Var t m))) => MonadBind t m where
 
   -- | This is a variable that has a unifiable term associated with it.
-  type Var t = (r :: Type) | r -> t
+  type Var t = (r :: (Type -> Type) -> Type) | r -> t
 
   -- | Create a new free (unbound) variable. The proxy term is a bit annoying
   --   but at least it helps ensure that everything is properly typed without
@@ -168,7 +168,7 @@ class (Monad m) => MonadAttempt m where
 --   recover from.
 --
 --   NOTE :: If you disagree with the above, I'd be happy to listen to why.
-defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
+defaultErrorLiftAttempt :: forall t m f b e. (MonadTransControl t,
                                       MonadAttempt m,
                                       Monad (t m),
                                       MonadError e (t m)
@@ -178,7 +178,7 @@ defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
                    -> t m (Either f b)
                    -> (f -> t m b)
                    -> t m b
-defaultLiftAttempt extractState insertState act recover = do
+defaultErrorLiftAttempt extractState insertState act recover = do
   initState <- captureT
   result <- liftWith $ \ run ->
     attempt (act' run) $ recover' run initState
@@ -201,6 +201,36 @@ defaultLiftAttempt extractState insertState act recover = do
         = run $ restoreT (pure initSt) >>= (\ () -> case f of
             (Left e) -> throwError e
             (Right f') -> recover f')
+
+-- | Lift an attempt through a type without handling errors. Should pretty
+--   much only be used on an ExceptT.
+defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
+                                      MonadAttempt m,
+                                      Monad (t m)
+                                     )
+                   => (forall a. StT t a -> (StT t (), a))
+                   -> (forall a. (StT t (), a) -> StT t a)
+                   -> t m (Either f b)
+                   -> (f -> t m b)
+                   -> t m b
+defaultLiftAttempt extractState insertState act recover = do
+  initState <- captureT
+  result <- liftWith $ \ run ->
+    attempt (act' run) $ recover' run initState
+  restoreT $ pure result
+    where
+
+
+      act' :: Run t -> m (Either f (StT t b))
+      act' run = extractState <$> (run @_ @(Either f b) act) >>= pure . \case
+        (st, Right b) -> Right $ insertState (st, b :: b)
+        (_ , Left  f) -> Left  f
+
+      recover' :: Run t -> StT t () -> f -> m (StT t b)
+      recover' run initSt f = run $ do
+        () <- restoreT (pure initSt)
+        recover f
+
 
 -- | A context for an error modifies an error to add additional metadata.
 type ErrorContext e = e -> e
