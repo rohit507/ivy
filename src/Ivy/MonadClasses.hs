@@ -1,4 +1,4 @@
-
+{-# OPTIONS_GHC -fno-warn-missing-methods #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-|
 Module      : Ivy.Scratchpad
@@ -204,7 +204,7 @@ defaultErrorLiftAttempt extractState insertState act recover = do
 
 -- | Lift an attempt through a type without handling errors. Should pretty
 --   much only be used on an ExceptT.
-defaultLiftAttempt :: forall t m f b e. (MonadTransControl t,
+defaultLiftAttempt :: forall t m f b. (MonadTransControl t,
                                       MonadAttempt m,
                                       Monad (t m)
                                      )
@@ -255,6 +255,8 @@ class BindingError e where
                        -> t (Var t m)
                        -> e
 
+  invalidTermUpdate :: (IBTM e t m, Show (t (Var t m))) => Text -> e
+
   -- | Context where we're getting the Term State of a Var.
   gettingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
 
@@ -290,6 +292,8 @@ instance BindingError Text where
   nonexistentTerm v = "Could not find term `" <> showVar v <> "`."
 
   termsNotUnified a b = "Terms should be unified `" <> show a <> "`, and `" <> show b <> "`."
+
+  invalidTermUpdate t = "Term update failed because:" <> t
 
   gettingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
   gettingTermStateOf v = addErrorCtxt $ "While getting TermState of `" <> showVar v <> "`:"
@@ -333,6 +337,16 @@ type ThrowBindErr e t m m'
   , BindingError e
   )
 
+data VoidT a
+
+instance Show1 VoidT
+instance Eq1 VoidT
+instance JoinSemiLattice1 e VoidT
+instance Functor VoidT
+instance Foldable VoidT
+instance Traversable VoidT
+instance Show (VoidT a)
+
 throwNonexistentTerm :: (ThrowBindErr e t m m') => Var t m' -> m c
 throwNonexistentTerm = throwError . nonexistentTerm
 
@@ -344,6 +358,16 @@ throwTermsNotUnified :: (ThrowBindErr e t m m')
                      -> t (Var t m')
                      -> m c
 throwTermsNotUnified ta tb = throwError $ termsNotUnified ta tb
+
+throwInvalidTermUpdate :: forall e m c. (BindingError e
+                                       , MonadError e m
+                                       , Typeable (Var VoidT)
+                                       , Typeable m
+                                       , Typeable e
+                                       , Eq (Var VoidT m)
+                                       , Show (Var VoidT m)
+                                       ) => Text -> m c
+throwInvalidTermUpdate e = throwError $ invalidTermUpdate @e @VoidT @m e
 
 withMonadError :: (MonadError e m) => (e -> e) -> m a -> m a
 withMonadError f v = catchError v (throwError . f)

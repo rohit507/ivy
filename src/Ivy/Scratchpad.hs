@@ -12,7 +12,6 @@ Portability : POSIX
 
 module Ivy.Scratchpad where
 
-import Ivy.Prelude hiding (IntSet, IntMap)
 -- import Control.Lens hiding (Context)
 -- import Control.Lens.TH
 
@@ -34,19 +33,19 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
-
+import qualified GHC.Base (Functor, fmap)
+import qualified Control.Monad.Fail (fail)
 import Ivy.IntBindT
+import Ivy.Prelude hiding (IntSet, IntMap)
+import Control.Monad (ap)
 
--- | Stuff that, for now we're just going to assume exists
-instance () => Functor (Rule m)
 
-instance () => Applicative (Rule m)
-
-instance () => Monad (Rule m)
-
+{-
 instance () => MonadFail (Rule m)
 
 instance () => Alternative (Rule m)
+-}
+{-
 
 ruleSet :: BoundStateIB t m -> RuleSet t m
 ruleSet = undefined
@@ -93,10 +92,6 @@ instance MonadRule (IntBindT m) where
   addRule v r = undefined
 
 
-data Rule m a where
-  Lookup :: Var t m -> m (Rule m ()) -> Rule m ()
-  Bind   :: Var t m -> m (t (Var t m)) -> Rule m ()
-  Act    :: m a -> Rule m a
 
 data RuleSet t m
 
@@ -125,3 +120,4 @@ liftAddRule = undefined
 --    -- Match on !g = !h + !h
 --    --   Will pass guard, match on !g (again, and run its payload?)
 --    --   Nah -- Is a problem
+-}

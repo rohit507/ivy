@@ -35,21 +35,48 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
+import qualified GHC.Base (Functor, fmap)
+import qualified Control.Monad.Fail (fail)
+import Control.Monad (ap)
 -- import qualified Data.IntMap as M
 -- import Data.TypeMap.Dynamic (TypeMap)
 -- import qualified Data.TypeMap.Dynamic as TM
+
+
+data TypedVar where
+  TVar :: (IBTM' e t m)
+    => TypeRep t
+    -> TypeRep m
+    -> TypeRep e
+    -> VarIB t m
+    -> TypedVar
+
+instance Ord TypedVar where
+  compare (TVar _ _ _ n) (TVar _ _ _ n') = compare (unpack n) (unpack n')
+
+instance Eq TypedVar where
+  (TVar tt tm te v) == (TVar tt' tm' te' v') =
+    case eqTypeRep tt tt' of
+      Nothing -> False
+      Just HRefl
+        -> case eqTypeRep tm tm' of
+         Nothing -> False
+         Just HRefl -> case eqTypeRep te te' of
+           Nothing -> False
+           Just HRefl -> v == v'
+
+instance Hashable TypedVar where
+  hashWithSalt s (TVar _ _ _ n) = hashWithSalt s (unpack n)
 
 -- | Uninhabited type we use for our Item family.
 --
 --   TODO :: Modify this so that we can support non-singlton relationmaps.
 data RelMap
 
-data TypedVar where
-  TVar :: (IBTM' e t m) => TypeRep t -> TypeRep m -> VarIB t m -> TypedVar
 type instance TM.Item RelMap t = TypedVar
 
 tVar :: forall t m e. (IBTM' e t m) => VarIB t m -> TypedVar
-tVar = TVar (typeRep @t) (typeRep @m)
+tVar = TVar (typeRep @t) (typeRep @m) (typeRep @e)
 
 -- | Reader Monad Info
 
@@ -144,6 +171,8 @@ data BoundState t m = BoundState {
      , forwardedFrom :: IntSet (VarID t m)
      -- | What terms does this one subsume?
      , subsumedTerms :: IntSet (VarID t m)
+     -- | The rules to be run when this term is updated.
+     , ruleSet :: RuleSet m
      -- | Has this term been changed and not had any of its hooks run.
      , dirty :: !Bool
      }
@@ -164,6 +193,7 @@ freeVarState = BoundState {
   , relations = TM.empty
   , forwardedFrom = IS.empty
   , subsumedTerms = IS.empty
+  , ruleSet = HM.empty
   , dirty = True
   }
 
@@ -347,14 +377,21 @@ modifyBoundState :: forall t m e. (IBTM' e t m)
 modifyBoundState v f = do
   bs <- getBoundState v
   bs' <- f bs
-  when (bs /= bs') $ setTermState v (Bound typeRep typeRep bs'{dirty=True})
+  whenM (isBoundStateUpdated bs bs')
+    $ setTermState v (Bound typeRep typeRep bs'{dirty=True})
 
 -- | Checks whether two bound states are semantically different
+--
+--   TODO :: Make the check more thorough rather than only checking term equality.
 isBoundStateUpdated :: forall t m e. (IBTM' e t m)
                     => BoundStateIB t m
                     -> BoundStateIB t m
                     -> IBRWST m Bool
-isBoundStateUpdated = undefined
+isBoundStateUpdated old new = case (termValue old, termValue new) of
+  (Nothing, Nothing) -> pure False
+  (Just otv, Just ntv) -> isJust <$> equalizeTerms @t @m @e otv ntv
+  (Just _, Nothing) -> throwInvalidTermUpdate "Updating a Bound term to Free."
+  _ -> pure True
 
 -- | Potentially gets a forwarded var for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
@@ -444,13 +481,13 @@ forwardTo from to = do
   pure to
 
 -- | Getting the latest version of a term, by updating all its member variables.
-freshenTerm :: forall e t m. (IBTM' e t m)
+freshenTerm :: forall t m e. (IBTM' e t m)
               => t (VarIB t m)
               -> IBRWST m (t (VarIB t m))
 freshenTerm = traverse getRepresentative
 
 -- | If terms are functionally identical, merge them into a new entry.
-equalizeTerms :: forall e t m. (IBTM' e t m)
+equalizeTerms :: forall t m e. (IBTM' e t m)
               => t (VarIB t m)
               -> t (VarIB t m)
               -> IBRWST m (Maybe (t (VarIB t m)))
@@ -472,23 +509,26 @@ mergeBoundState fromVar BoundState{termValue=ftv
                                , relations=fr
                                , forwardedFrom=ff
                                , subsumedTerms=fs
+                               , ruleSet=frs
                                }
                 BoundState{termValue=ttv
                              ,relations=tr
                              ,forwardedFrom=tf
                              ,subsumedTerms=ts
+                             ,ruleSet=trs
                              }
   = BoundState <$> matchTerms ftv ttv
                <*> mergeRels tr
                <*> mergeForwarded ff tf
                <*> mergeSubsumed  fs ts
+               <*> mergeRuleSet frs trs
                <*> pure True
 
   where
 
     matchTerms Nothing a = pure a
     matchTerms a Nothing = pure a
-    matchTerms (Just ftv) (Just ttv) = equalizeTerms @e @t @m ftv ttv >>= \case
+    matchTerms (Just ftv) (Just ttv) = equalizeTerms @t @m @e ftv ttv >>= \case
       Nothing ->  throwTermsNotUnified ftv ttv
       a -> pure a
 
@@ -496,9 +536,9 @@ mergeBoundState fromVar BoundState{termValue=ftv
     mergeRels tr = TM.traverse mergeRelMap tr
 
     mergeRelMap :: forall p. (Typeable p) => Proxy p -> TypedVar -> IBRWST m TypedVar
-    mergeRelMap proxy t@(TVar tt tm tv) = case TM.lookup proxy fr of
+    mergeRelMap proxy t@(TVar tt tm te tv) = case TM.lookup proxy fr of
       Nothing -> pure t
-      Just (TVar ft fm fv) -> mergeTypedVars tt tm ft fm tv fv
+      Just (TVar ft fm fe fv) -> mergeTypedVars tt tm ft fm tv fv
 
     -- You know what, this entire thing is a bit absurd, ensuring that
     -- three sets of terms all properly match. oh well.
@@ -517,12 +557,17 @@ mergeBoundState fromVar BoundState{termValue=ftv
         (\ HRefl HRefl -> matchType2 @e @e
           (typeRep @e') (throwInvalidTypeFound (typeRep @e') (typeRep @e))
           (typeRep @e'') (throwInvalidTypeFound (typeRep @e'') (typeRep @e))
-          (\ HRefl HRefl -> TVar ttb (typeRep @m) <$> unifyT va vb )))
+          (\ HRefl HRefl -> TVar ttb (typeRep @m) (typeRep @e) <$> unifyT va vb )))
 
 
     mergeForwarded f t = pure $ f <> t <> IS.singleton fromVar
 
     mergeSubsumed f t = pure $ f <> t
+
+    mergeRuleSet f t = do
+      f' <- refreshRuleSet f
+      t' <- refreshRuleSet t
+      pure $ HM.union f' t'
 
 -- | Run some computation while assuming some things, return the
 --   result of that computation and which of the assumptions were triggered.
@@ -678,15 +723,109 @@ instance (Property p t t', IBTM' e t m, IBTM' e t' m)
         modifyBoundState v' (\ b@BoundState{relations=rl} ->
               pure b{relations= TM.insert (typeRep @p) (tVar nv) rl})
         pure nv
-      Just (TVar tt tm nv) -> matchType2 @t' @m
+      Just (TVar tt tm _ nv) -> matchType2 @t' @m
         tt (throwInvalidTypeFound tt (typeRep @t'))
         tm (throwInvalidTypeFound tm (typeRep @m))
         (\ HRefl HRefl -> pure nv)
 
-
 instance (MonadError e (IntBindT m), MonadAttempt m) => MonadAttempt (IntBindT m) where
 
   attempt :: IntBindT m (Either f b) -> (f -> IntBindT m b) -> IntBindT m b
-  attempt = defaultLiftAttempt
+  attempt = defaultErrorLiftAttempt
               (\ (a,s,w) -> (((),s,w),a))
               (\ (((),s,w), a) -> (a,s,w))
+
+data History = History
+  { ident :: RuleID
+  , terms :: [TypedVar]
+  } deriving (Eq, Ord, Generic)
+
+instance Hashable History where
+  hashWithSalt s (History ide ts) = hashWithSalt (hashWithSalt s ide) ts
+
+
+data Rule m a where
+  Watch ::
+    { watch :: TypedVar
+    , update :: m [Rule m a]
+    } -> Rule m a
+  Run :: m [Rule m a] -> Rule m a
+  Act :: m a -> Rule m a
+
+type RuleIB m = Rule (IntBindT m)
+
+-- | Stuff that, for now we're just going to assume exists
+instance (Functor m) => GHC.Base.Functor (Rule m) where
+  fmap f (Watch w u) = Watch w ((map . map $ map f) u)
+  fmap f (Run m) = Run $ (map . map $ map f) m
+  fmap f (Act m) = Act . map f $ m
+
+instance (Monad m) => Applicative (Rule m) where
+  pure = Act . pure
+
+  (<*>) = ap
+
+instance (Monad m) => Monad (Rule m) where
+  (Act m) >>= k = Run . map (:[]) $ k <$> m
+  (Run m) >>= k = Run $ (map $ map (>>= k)) m
+  (Watch w u) >>= k = Watch w $ map (map (>>= k)) u
+
+instance (Monad m) => MonadFail (Rule m) where
+  fail _ = Run $ pure []
+
+refreshTVar :: forall m e. (IBM e m)
+  => TypedVar -> IBRWST m TypedVar
+refreshTVar (TVar tt tm te n) = matchType2 @m @e
+  tm (throwInvalidTypeFound tm (typeRep @m))
+  te (throwInvalidTypeFound tm (typeRep @m))
+  (\ HRefl HRefl -> TVar tt tm te
+    . unsafeExpandVID
+    . unsafeExpandTID
+    . flattenVID <$> getRepresentative @_ @m @e n)
+
+refreshHistory :: (IBM e m) => History -> IBRWST m History
+refreshHistory (History ident terms)
+  = History ident <$> traverse refreshTVar terms
+
+refreshRuleSet :: (IBM e m) => RuleSetIB m -> IBRWST m (RuleSet m)
+refreshRuleSet hm
+  = HM.fromList <$> traverse (\ (a,b) -> (,b) <$> refreshHistory a)
+                            (HM.toList hm)
+
+-- | Adds some rules to the thing.
+addRules :: VarIB t m -> RuleSetIB m -> IBRWST m ()
+addRules v s = modifyBoundState v (\ b -> do
+                 rs' <- refreshRuleSet $ ruleSet b
+                 s' <- HM.filterWithKey
+                    (\ k _ -> not $ HM.member k rs')
+                    <$> refreshRuleSet s
+                 if HM.null s'
+                 then pure b
+                 else pure b{ruleSet=HM.union s' rs', dirty=True})
+
+runRules :: forall m. RuleSetIB m -> IBRWST m ()
+runRules (HM.toList -> rl) = undefined
+
+  where
+
+    addTVRule :: (TypedVar, RuleSetIB m) -> IBRWST m ()
+    addTVRule (TVar tt tm te v, rs) = addRules v rs
+
+    collapseRuleList :: [(TypedVar, RuleSetIB m)] -> HashMap TypedVar (RuleSetIB m)
+    collapseRuleList
+      = foldr (\ (tv,rs) -> HM.adjust (\ rs' -> HM.union rs' rs) tv) HM.empty
+
+
+    runPair :: (History, IntBindT m [RuleIB m ()]) -> IBRWST m [(TypedVar,RuleSetIB m)]
+    runPair (History i t, m) =
+      (\ (tv, m) -> (tv,HM.singleton (History i (tv:t)) m))
+      <$> (getIBT m >>= (map mconcat . traverse runRule))
+
+    runRule :: RuleIB m () -> IBRWST m [(TypedVar, IntBindT m [RuleIB m ()])]
+    runRule (Act m) = getIBT m *> pure []
+    runRule (Run m) = getIBT m >>= (map mconcat . traverse runRule)
+    runRule (Watch v m) = pure [(v, m)]
+
+-- | Set of rules that should be triggered when an action happens.
+type RuleSet m = HashMap History (m [Rule m ()])
+type RuleSetIB m = RuleSet (IntBindT m)

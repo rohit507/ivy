@@ -45,6 +45,13 @@ instance Newtype (VarID t m) Int where
   pack = VID
   unpack = getVID
 
+newtype RuleID = RID { getRID :: Int}
+  deriving (Eq, Ord, Show, Generic, Hashable)
+
+instance Newtype RuleID Int where
+  pack = RID
+  unpack = getRID
+
 -- | Strip type information from a TermID
 crushTID :: TermID t -> ETermID
 crushTID = pack . unpack
