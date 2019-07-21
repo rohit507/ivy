@@ -787,14 +787,14 @@ refreshHistory :: (IBM e m) => History -> IBRWST m History
 refreshHistory (History ident terms)
   = History ident <$> traverse refreshTVar terms
 
-refreshRuleSet :: (IBM e m) => RuleSetIB m -> IBRWST m (RuleSet m)
+refreshRuleSet :: (IBM e m) => RuleSetIB m -> IBRWST m (RuleSetIB m)
 refreshRuleSet hm
   = HM.fromList <$> traverse (\ (a,b) -> (,b) <$> refreshHistory a)
                             (HM.toList hm)
 
 -- | Adds some rules to the thing.
-addRules :: VarIB t m -> RuleSetIB m -> IBRWST m ()
-addRules v s = modifyBoundState v (\ b -> do
+addRules :: forall t m e. (IBTM' e t m) => VarIB t m -> RuleSetIB m -> IBRWST m ()
+addRules v s = modifyBoundState @t @m @e v (\ b -> do
                  rs' <- refreshRuleSet $ ruleSet b
                  s' <- HM.filterWithKey
                     (\ k _ -> not $ HM.member k rs')
@@ -803,13 +803,19 @@ addRules v s = modifyBoundState v (\ b -> do
                  then pure b
                  else pure b{ruleSet=HM.union s' rs', dirty=True})
 
-runRules :: forall m. RuleSetIB m -> IBRWST m ()
-runRules (HM.toList -> rl) = undefined
+runRules :: forall m e. (IBM e m) => RuleSetIB m -> IBRWST m ()
+runRules (HM.toList -> rl)
+  = do
+  v <- HM.toList . collapseRuleList . mconcat <$> traverse runPair rl
+  traverse_ addTVRule v
 
   where
 
     addTVRule :: (TypedVar, RuleSetIB m) -> IBRWST m ()
-    addTVRule (TVar tt tm te v, rs) = addRules v rs
+    addTVRule (TVar tt tm te v, rs) = matchType2 @m @e
+      tm (throwInvalidTypeFound tm (typeRep @m))
+      te (throwInvalidTypeFound te (typeRep @e))
+      (\ HRefl HRefl -> addRules v rs)
 
     collapseRuleList :: [(TypedVar, RuleSetIB m)] -> HashMap TypedVar (RuleSetIB m)
     collapseRuleList
@@ -818,7 +824,7 @@ runRules (HM.toList -> rl) = undefined
 
     runPair :: (History, IntBindT m [RuleIB m ()]) -> IBRWST m [(TypedVar,RuleSetIB m)]
     runPair (History i t, m) =
-      (\ (tv, m) -> (tv,HM.singleton (History i (tv:t)) m))
+      map (\ (tv, m) -> (tv,HM.singleton (History i (tv:t)) m))
       <$> (getIBT m >>= (map mconcat . traverse runRule))
 
     runRule :: RuleIB m () -> IBRWST m [(TypedVar, IntBindT m [RuleIB m ()])]
