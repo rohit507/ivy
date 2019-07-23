@@ -315,7 +315,6 @@ toConfig = to $ \ (Context tm c _) -> do
   pure c
 
 
--- $ Major IBRWST operations
 
 -- | Generate a new internal identifier of some type.
 --
@@ -423,15 +422,15 @@ cleanTerm t = (view $ toConfig @m) >>= \case
         runRules t'
       go (n + 1) t' max
 
+isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
+isDirty = undefined
+
+
 withAssumption :: forall t m e. () => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
 withAssumption = undefined
 
 getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
 getDependencies = undefined
-
-isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
-isDirty = undefined
-
 
 -- | Flags all child terms as dirty as well, stepping through what rules
 --   can modify this term.
