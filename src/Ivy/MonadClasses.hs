@@ -284,6 +284,9 @@ class BindingError e where
   gettingPropertyOf :: (IBTM e t m, Property p t t')
     => Var t m -> TypeRep p -> ErrorContext e
 
+  -- Cycle didn't quiesce in time
+  -- CleaningTerm
+
 addErrorCtxt :: Text -> Text -> Text
 addErrorCtxt ctxt = Text.unlines . (ctxt :) . map (Text.append "  ") . Text.lines
 

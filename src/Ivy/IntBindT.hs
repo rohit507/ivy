@@ -107,23 +107,27 @@ data Assuming = Assuming {
   , _equal    :: HashSet (TypedVar, TypedVar)
     -- | Assumption that one term subsumes another.
   , _subsumed :: HashSet (TypedVar, TypedVar)
+    -- | Assumption that some term has been cleaned.
   , _clean :: HashSet TypedVar
   }
 
 -- | Check if two sets of assumptions intersect
 assumingIntersects :: Assuming -> Assuming -> Bool
-assumingIntersects (Assuming a b c) (Assuming a' b' c')
+assumingIntersects (Assuming a b c d) (Assuming a' b' c' d')
   = not $  HS.null (HS.intersection a a')
         && HS.null (HS.intersection b b')
         && HS.null (HS.intersection c c')
+        && HS.null (HS.intersection d d')
 
 
 -- | Get the intersection of two sets of assumptions
 assumingIntersection :: Assuming -> Assuming -> Assuming
-assumingIntersection (Assuming a b c) (Assuming a' b' c')
+assumingIntersection (Assuming a b c d) (Assuming a' b' c' d')
   = Assuming (HS.intersection a a')
              (HS.intersection b b')
              (HS.intersection c c')
+             (HS.intersection d d')
+
 data Assumption
   = TypedVar `IsUnifiedWith` TypedVar
   | TypedVar `IsEqualTo`     TypedVar
@@ -146,14 +150,17 @@ assumeClean :: forall t e. (Term e t) => TermID t -> Assumption
 assumeClean = IsClean . typedTID @t @e
 
 buildAssuming :: Assumption -> Assuming
-buildAssuming = undefined
+buildAssuming (a `IsUnifiedWith` b) = mempty{_unified=HS.fromList [(a,b),(b,a)]}
+buildAssuming (a `IsEqualTo` b) = mempty{_equal=HS.fromList [(a,b),(b,a)]}
+buildAssuming (a `IsSubsumedBy` b) = mempty{_subsumed=HS.singleton (a,b)}
+buildAssuming (IsClean  a) = mempty{_clean=HS.singleton a}
 
 instance Semigroup Assuming where
-  (Assuming a b c) <> (Assuming a' b' c')
-    = Assuming (a <> a') (b <> b') (c <> c')
+  (Assuming a b c d) <> (Assuming a' b' c' d')
+    = Assuming (a <> a') (b <> b') (c <> c') (d <> d')
 
 instance Monoid Assuming where
-  mempty = Assuming mempty mempty mempty
+  mempty = Assuming mempty mempty mempty mempty
 
 -- | Runtime state of our term-graph thing.
 data BindingState = BindingState {
@@ -410,27 +417,42 @@ cleanTerm t = (view $ toConfig @m) >>= \case
 
   where
 
+    go :: Int -> TermID t -> Int -> IBRWST m ()
     go n t max = do
       when (n > max) $ panic "Cycle didn't quiesce in time"
       t' <- getRepresentative t
-      whenM (isDirty t') $ do
-        -- If we can clean up all our child terms
-        markClean t
-        markClean t'
-        cleanDependencies t'
-        applySubsumptions t'
-        runRules t'
-      go (n + 1) t' max
+      if (t /= t')
+        then (withAssumption (assumeClean @t @e t) $ cleanTerm t') *> skip
+        else whenM (isDirty t') $ do
+          (dirtied,cyclic) <- withAssumption (assumeClean @t @e t') $ do
+            markClean t'
+            cleanDependencies t'
+            applySubsumptions t'
+            runRules t'
+            isDirty'
+          when cyclic $ go (n + 1) t' max
+      markClean t
 
 isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
 isDirty = undefined
 
-
-withAssumption :: forall t m e. () => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
+withAssumption :: forall a m e. () => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
 withAssumption = undefined
 
 getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
 getDependencies = undefined
+
+getDependents :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
+getDependents = undefined
+
+applySubsumptions :: forall t m e. () => TermID t -> IBRWST m ()
+applySubsumptions = undefined
+
+cleanDependencies :: forall t m e. () => TermID t -> IBRWST m ()
+cleanDependencies = undefined
+
+runRules :: forall t m e. () => TermID t -> IBRWST m ()
+runRules = undefined
 
 -- | Flags all child terms as dirty as well, stepping through what rules
 --   can modify this term.
