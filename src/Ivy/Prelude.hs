@@ -15,6 +15,9 @@ module Ivy.Prelude (
   , censor
   , maybeM
   , liftEither
+  , whenJust
+  , matchType
+  , matchType2
 ) where
 
 import Intro as P
@@ -33,6 +36,12 @@ import Control.Newtype as P
 import GHC.Exts as P (fromListN)
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
+import Control.Lens as P hiding (para, under, over, op, ala, Context)
+
+
+whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
+whenJust Nothing _ = skip
+whenJust (Just a) f = f a
 
 liftEither :: MonadError e m => Either e a -> m a
 liftEither = either throwError pure
@@ -67,7 +76,22 @@ maybeM d m = m >>= \case
   Just a -> pure a
   Nothing -> d
 
+-- | perform some action if types don't match
+matchType :: forall t t' a. (Typeable t)
+           => TypeRep t' -> a -> (t :~~: t' -> a) -> a
+matchType tr err succ = fromMaybe err $ do
+  h <- eqTypeRep (typeRep @t) tr
+  pure $ succ h
 
+-- | Matches a pair of types instead of just one.
+matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
+           => TypeRep t' -> a
+           -> TypeRep m' -> a
+           -> (t :~~: t' -> m :~~: m' -> a)
+           -> a
+matchType2 tt errt tm errm succ =
+  matchType @t tt errt
+    (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
 {-
 import Data.Functor as B
 

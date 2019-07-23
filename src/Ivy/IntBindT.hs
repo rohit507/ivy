@@ -1,6 +1,7 @@
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-|
 Module      : Ivy.Scratchpad
 Description : Random scratch work goes here until it's moved
@@ -25,77 +26,49 @@ import Ivy.Wrappers.IntMap (IntMap)
 import qualified Ivy.Wrappers.IntMap as IM
 import Ivy.Wrappers.IntSet (IntSet)
 import qualified Ivy.Wrappers.IntSet as IS
-import Ivy.Wrappers.IntGraph (IntGraph)
-import qualified Ivy.Wrappers.IntGraph as IG
 import Data.Bimap (Bimap)
 import qualified Data.Bimap as BM
-import Data.TypeMap.Dynamic.Alt (TypeMap, Item)
+import Data.TypeMap.Dynamic (TypeMap, Item)
 import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import qualified GHC.Base (Functor, fmap)
+import Algebra.Graph.AdjacencyMap (AdjacencyMap)
+import qualified Algebra.Graph.AdjacencyMap as G
+
+
 import qualified Control.Monad.Fail (fail)
 import Control.Monad (ap)
--- import qualified Data.IntMap as M
--- import Data.TypeMap.Dynamic (TypeMap)
--- import qualified Data.TypeMap.Dynamic as TM
+import Data.IORef
+import Control.Concurrent.Supply
 
-
-data TypedVar where
-  TVar :: (IBTM' e t m)
-    => TypeRep t
-    -> TypeRep m
-    -> TypeRep e
-    -> VarIB t m
-    -> TypedVar
-
-instance Ord TypedVar where
-  compare (TVar _ _ _ n) (TVar _ _ _ n') = compare (unpack n) (unpack n')
-
-instance Eq TypedVar where
-  (TVar tt tm te v) == (TVar tt' tm' te' v') =
-    case eqTypeRep tt tt' of
-      Nothing -> False
-      Just HRefl
-        -> case eqTypeRep tm tm' of
-         Nothing -> False
-         Just HRefl -> case eqTypeRep te te' of
-           Nothing -> False
-           Just HRefl -> v == v'
-
-instance Hashable TypedVar where
-  hashWithSalt s (TVar _ _ _ n) = hashWithSalt s (unpack n)
 
 -- | Uninhabited type we use for our Item family.
---
---   TODO :: Modify this so that we can support non-singlton relationmaps.
 data RelMap
-
 type instance TM.Item RelMap t = TypedVar
 
-tVar :: forall t m e. (IBTM' e t m) => VarIB t m -> TypedVar
-tVar = TVar (typeRep @t) (typeRep @m) (typeRep @e)
+data RuleMap
+type instance TM.Item RuleMap t = DefaultRule t
 
--- | Reader Monad Info
+data DefaultRule t where
+  DR :: TypeRep m -> [TermID t -> Rule (IntBindT m) ()] -> DefaultRule t
 
 data Context where
-  Context :: (Monad m, Typeable m) => {
-    monadType :: TypeRep m
-  , conf :: Config m
-  , assumes :: Assuming
-  } -> Context
+  Context :: forall m. (Monad m, Typeable m) =>
+    { _monadType  :: TypeRep m
+    , _configData  :: Config m
+    , _assumptions :: Assuming
+    } -> Context
 
-
-type IBTM' e t m = (IBTM e t m, MonadBind t (IntBindT m))
 
 -- | General config info that only needs to be set once.
 
 data Config m = Config {
     -- | How many times do we try to unify a single pair of elements before
     --   giving up hope that it will ever quiesce.
-    maxCyclicUnifications :: Int
+    _maxCyclicUnifications :: Int
     -- | An action to generate a new unique ID. It's here because often we
     --   will want to generate UIDs in a context lower in the stack that isn't
     --   really aware of backtracking from using 'attempt'. That way we don't
@@ -103,9 +76,17 @@ data Config m = Config {
     --
     --   We're not adding something to generate IDs to the monad stack
     --   because that seems like we're asking too much.
-  , generateNewID :: m Int
+  , _generateNewID :: m Int
   }
 
+-- | Basic default configuration.
+defaultConfig :: (MonadIO m) => m (Config m)
+defaultConfig = do
+  supply <- liftIO $ newIORef =<< newSupply
+  let genID = liftIO $ atomicModifyIORef supply (flip2 . freshId)
+  pure $ Config 200 genID
+  where
+    flip2 (a,b) = (b,a)
 
 -- | A set of assumptions about the term-graph that were either made or
 --   relied upon. We use this to properly handle cyclic terms and co-inductive
@@ -120,30 +101,44 @@ data Config m = Config {
 
 data Assuming = Assuming {
     -- | Assumption that a pair of terms are unified.
-    unified :: HashSet (ETID,ETID)
+    _unified  :: HashSet (TypedVar, TypedVar)
     -- | Assumption that some pair of terms is structurally equal, without
     --   necessarily being unified.
-  , equal :: HashSet (ETID,ETID)
+  , _equal    :: HashSet (TypedVar, TypedVar)
     -- | Assumption that one term subsumes another.
-  , subsumed :: HashSet (ETID,ETID)
+  , _subsumed :: HashSet (TypedVar, TypedVar)
   }
 
+-- | Check if two sets of assumptions intersect
+assumingIntersects :: Assuming -> Assuming -> Bool
+assumingIntersects (Assuming a b c) (Assuming a' b' c')
+  = not $  HS.null (HS.intersection a a')
+        && HS.null (HS.intersection b b')
+        && HS.null (HS.intersection c c')
+
+
+-- | Get the intersection of two sets of assumptions
+assumingIntersection :: Assuming -> Assuming -> Assuming
+assumingIntersection (Assuming a b c) (Assuming a' b' c')
+  = Assuming (HS.intersection a a')
+             (HS.intersection b b')
+             (HS.intersection c c')
 data Assumption
-  = ETID `IsUnifiedWith` ETID
-  | ETID `IsEqualTo`     ETID
-  | ETID `IsSubsumedBy`  ETID
+  = TypedVar `IsUnifiedWith` TypedVar
+  | TypedVar `IsEqualTo`     TypedVar
+  | TypedVar `IsSubsumedBy`  TypedVar
 
 -- | Convinient builder for an assumption that strips type information
-isUnifiedWith :: VarIB t m -> VarIB t m -> Assumption
-isUnifiedWith a b = (flattenVID a) `IsUnifiedWith` (flattenVID b)
+isUnifiedWith :: forall t e. (Term e t) => TermID t -> TermID t -> Assumption
+isUnifiedWith a b = (typedTID @t @e a) `IsUnifiedWith` (typedTID @t @e b)
 
 -- | Convinient builder for an assumption that strips type information
-isEqualTo :: VarIB t m -> VarIB t m -> Assumption
-isEqualTo a b = (flattenVID a) `IsEqualTo` (flattenVID b)
+isEqualTo :: forall t e. (Term e t) => TermID t -> TermID t -> Assumption
+isEqualTo a b = (typedTID @t @e a) `IsEqualTo` (typedTID @t @e b)
 
 -- | Convinient builder for an assumption that strips type information
-isSubsumedBy :: VarIB t m -> VarIB t m -> Assumption
-isSubsumedBy a b = (flattenVID a) `IsSubsumedBy` (flattenVID b)
+isSubsumedBy :: forall t e. (Term e t) => TermID t -> TermID t -> Assumption
+isSubsumedBy a b = (typedTID @t @e a) `IsSubsumedBy` (typedTID @t @e b)
 
 instance Semigroup Assuming where
   (Assuming a b c) <> (Assuming a' b' c')
@@ -153,54 +148,99 @@ instance Monoid Assuming where
   mempty = Assuming mempty mempty mempty
 
 -- | Runtime state of our term-graph thing.
-
 data BindingState = BindingState {
-     -- | Term Specific Information.
-     termData :: IntMap ETermID TermState
+     _termData      :: HashMap ETID   TermState
+   , _ruleData      :: HashMap RuleID RuleState
+   , _dependencyMap :: AdjacencyMap InternalID
+   -- | A lookup table we use to find the rule corresponding
+   --   to some known history. This is generally kept fresh by
+   --   traversal when a term is forwarded.
+   , _ruleLookup    :: HashMap RuleHistory RuleID
+   -- | set of dirty terms that require cleaning.
+   , _dirtySet      :: HashSet ETID
+   , _defaultRules  :: TypeMap RuleMap
    }
 
-type BoundStateIB t m = BoundState t (IntBindT m)
 
--- | The state for a bound term, with type information
-
-data BoundState t m = BoundState {
-       termValue :: Maybe (t (VarID t m))
-     -- | Relations from this term to other terms
-     , relations :: TypeMap RelMap
-     -- | Terms that ultimately point to this term
-     , forwardedFrom :: IntSet (VarID t m)
-     -- | What terms does this one subsume?
-     , subsumedTerms :: IntSet (VarID t m)
-     -- | The rules to be run when this term is updated.
-     , ruleSet :: RuleSet m
-     -- | Has this term been changed and not had any of its hooks run.
-     , dirty :: !Bool
-     }
-
+-- | A generic identifier that lets us differentiate between terms and rules.
+data InternalID
+  = TID TypedVar
+  | RID RuleID
+  deriving (Eq, Ord, Generic, Hashable)
 
 -- | The unique state information we store for each term.
-
 data TermState where
-  Bound     :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> BoundState t m -> TermState
-  Forwarded :: (IBM e m, Term e t) => TypeRep t -> TypeRep m -> VarIB t m -> TermState
-  -- Errored   :: (IBTM' e t m, Typeable e)
-  --  => TypeRep t -> TypeRep m -> TypeRep e -> e  -> TermState
+  Bound     :: (Term e t) => TypeRep t -> TypeRep e -> BoundState t -> TermState
+  Forwarded :: (Term e t) => TypeRep t -> TypeRep e -> TermID     t -> TermState
 
--- | The state of a newly inserted free term.
-freeVarState :: forall t m. BoundState t m
-freeVarState = BoundState {
-    termValue = Nothing
-  , relations = TM.empty
-  , forwardedFrom = IS.empty
-  , subsumedTerms = IS.empty
-  , ruleSet = HM.empty
-  , dirty = True
-  }
+-- | The state for a bound term, with type information
+data BoundState t = BoundState {
+       _termType :: TypeRep t
+     , _termValue :: Maybe (t (TermID t))
+     -- | Relations from this term to other terms
+     , _relations :: TypeMap RelMap
+     -- | What terms does this one subsume?
+     , _subsumedTerms :: IntSet (TermID t)
+     }
 
--- | The term state of a newly inserted term
-freeTermState :: forall t m e. (IBTM' e t m) => VarIB t m -> TermState
-freeTermState _ = Bound (typeRep @t) (typeRep @m) freeVarState
+freeBoundState :: (Typeable t) => BoundState t
+freeBoundState = BoundState typeRep Nothing TM.empty IS.empty
 
+-- | The thunk for a rule itself and its metadata
+data RuleState where
+  RuleState ::
+    { _monadType :: TypeRep m
+    , _rule    :: IntBindT m [Rule (IntBindT m) ()]
+    } -> RuleState
+
+-- | The history of a rule which, when freshened, served as a unique identifier.
+data RuleHistory = RuleHistory
+  { _ident :: RuleID -- The identifier of the initial rule in the history
+  , _terms :: [(RuleAction,TypedVar)] -- A list of variables that are touched
+  } deriving (Eq, Ord, Generic, Hashable)
+
+-- | The type of action this rule performed on a given variable.
+data RuleAction = LookupTerm | WriteTerm
+  deriving (Eq, Ord, Show, Generic, Hashable)
+
+-- | This should probably be done with a free monad but this is a monad for
+--   rules we can execute to edit or manipulate terms.
+data Rule m a where
+  Watch :: (Typeable t, IBTM' e t m) =>
+    { watched    :: TermID t
+    , steps    :: m [Rule m a]
+    } -> Rule m a
+  Update :: (Typeable t, IBTM' e t m) =>
+    { updating :: TermID t
+    , update :: m (t (TermID t))
+    , steps :: m [Rule m a]
+    } -> Rule m a
+  Run :: m [Rule m a] -> Rule m a
+  Act :: m a -> Rule m a
+
+instance (Functor m) => GHC.Base.Functor (Rule m) where
+  fmap f (Watch w s) = Watch w ((map . map $ map f) s)
+  fmap f (Update t u s) = Update t u ((map . map $ map f) s)
+  fmap f (Run m) = Run $ (map . map $ map f) m
+  fmap f (Act m) = Act . map f $ m
+
+instance (Monad m) => Applicative (Rule m) where
+  pure = Act . pure
+  (<*>) = ap
+
+instance (Monad m) => Monad (Rule m) where
+  (Act m) >>= k = Run . map (:[]) $ k <$> m
+  (Run m) >>= k = Run $ (map $ map (>>= k)) m
+  (Watch w s) >>= k = Watch w $ map (map (>>= k)) s
+  (Update t u s) >>= k = Update t u $ map (map (>>= k)) s
+
+instance (Monad m) => MonadFail (Rule m) where
+  fail _ = Run $ pure []
+
+-- | the full set of constraints we use here and there
+type IBTM' e t m = (IBTM e t m, MonadBind t (IntBindT m))
+
+-- | Newtype for the fully loaded monad transformer.
 type IBRWST = RWST Context Assuming BindingState
 
 -- | Pure and Slow Transformer that allow for most of the neccesary binding
@@ -214,68 +254,236 @@ deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
 deriving newtype instance (Monad m) => MonadState BindingState (IntBindT m)
 deriving newtype instance (Monad m) => MonadReader Context (IntBindT m)
 
-instance MonadTrans IntBindT where
+-- $ Derived Field Lenses
+{-
+class HasMonadType s t a b | s b -> t, t a -> s where
+  monadType :: Lens s t a b
 
-  lift :: (Monad m) => m a -> IntBindT m a
-  lift = IntBindT . lift
+class HasConfigData s t a b | s a -> t b, t b -> s a, s b -> t a where
+  configData :: Lens s t a b
 
-instance MonadTransControl IntBindT where
+class HasAssumptions s t a b | s b -> t, t a -> s where
+  assumptions :: Lens s t a b
+instance forall m. (Typeable m) => HasMonadType Context Context (Maybe (TypeRep m)) (Maybe (TypeRep m)) where
+  monadType = lens getter setter
+    where
+      getter (Context mt _ _) = do
+        HRefl <- eqTypeRep mt (typeRep @m)
+        pure mt
 
-  type StT IntBindT a = (a, BindingState, Assuming)
-  liftWith f = IntBindT . rwsT $ \r s -> map (\x -> (x, s, mempty))
-                                      (f $ \t -> runRWST (getIBT t) r s )
-  restoreT mSt = IntBindT . rwsT $ \_ _ -> mSt
-  {-# INLINABLE liftWith #-}
-  {-# INLINABLE restoreT #-}
+      setter :: Context -> Maybe (TypeRep m) -> Context
+      setter c _ = fromMaybe c
 
--- | Keep from having to repeatedly
-type VarIB t m = Var t (IntBindT m)
+instance forall m.(Typeable m) =>  HasConfigData Context (Maybe Context) (Maybe (Config m)) (Config m) where
+  configData = lens getter setter
+    where
+      getter (Context mt c _) = do
+        HRefl <- eqTypeRep mt (typeRep @m)
+        pure c
 
-instance (forall e.
-           MonadError e (IntBindT m)
-         , MonadError e m
-         , IBTM' e t m) => MonadBind t (IntBindT m) where
+      setter (Context mt _ a) c' = do
+        HRefl <- eqTypeRep mt (typeRep @m)
+        pure $ Context mt c' a
 
-  type Var t = VarID t
+instance HasAssumptions Context Context Assuming Assuming where
+  assumptions = lens _assumptions (\ c a -> c{_assumptions=a})
+ -}
 
-  freeVar :: IntBindT m (VarIB t m)
-  freeVar = IntBindT $ freeVarT
+makeFieldsNoPrefix ''Context
+makeFieldsNoPrefix ''Config
+makeFieldsNoPrefix ''Assuming
+makeFieldsNoPrefix ''BindingState
+makePrisms ''InternalID
+makePrisms ''TermState
+makeFieldsNoPrefix ''BoundState
+makeFieldsNoPrefix ''RuleHistory
+makeFieldsNoPrefix ''RuleState
+makePrisms ''RuleAction
 
-  lookupVar :: VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
-  lookupVar = IntBindT . lookupVarT
+-- | a getter for typed config data
+toConfig :: forall m. (Typeable m) => Getting (Maybe (Config m)) Context (Maybe (Config m))
+toConfig = to $ \ (Context tm c _) -> do
+  HRefl <- eqTypeRep tm (typeRep @m)
+  pure c
 
-  bindVar :: VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
-  bindVar v t = IntBindT $ bindVarT v t
 
--- | Performs updates to the term that can get rid of dirty flags if needed
+-- $ Major IBRWST operations
 
 -- | Generate a new internal identifier of some type.
 --
 --   First type parameter is the output ident type.
 newIdent :: forall i m e. (IBM e m , Newtype i Int) => IBRWST m i
-newIdent = ask >>= \ (Context trm config _) -> matchType @m trm
-    (throwInvalidTypeFound trm (typeRep @m))
-    (\ HRefl -> lift . map pack $ generateNewID config)
+newIdent = (view $ toConfig @m) >>= \case
+  Nothing -> panic "invalid Ident Type"
+  Just conf -> pack <$> lift (conf ^. generateNewID)
+
+-- | Creates a new free variable. w/ all associated bookkeeping
+freeVarT :: forall t m e. (IBTM' e t m) => IBRWST m (TermID t)
+freeVarT = do
+  v :: TermID t <- newIdent
+  setTermData v (Bound typeRep (typeRep @e) $ freeBoundState @t)
+  applyDefaultRules v
+  addToDepGraph (TID $ typedTID @t @e v)
+  pure v
+
+-- | Looks up a variable after ensuring that it's been cleaned and updated.
+lookupVarT :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (Maybe (t (TermID t)))
+lookupVarT t = do
+  t' :: TermID t <- getRepresentative t
+  cleanTerm t'
+  let et' = crushTID t'
+  (use $ termData . at @(HashMap ETID TermState) et') >>= \case
+    Nothing -> panic " -- throwNonexistentTerm (unpackVID @_ t')"
+    Just Forwarded{} -> panic " -- throwExpectedBoundState "
+    Just (Bound tt te bs) -> matchType2 @t @e
+      tt (throwInvalidTypeFound tt (typeRep @t))
+      te (throwInvalidTypeFound te (typeRep @e))
+      (\ HRefl HRefl -> pure $ bs ^. termValue)
+
+
+freshenVar :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (TermID t)
+freshenVar = undefined
+
+freshenTerm :: forall t m e. (IBTM' e t m) => t (TermID t) -> IBRWST m (t (TermID t))
+freshenTerm = undefined
+
+bindVarT :: forall t m e. (IBTM' e t m) => TermID t -> t (TermID t) -> IBRWST m (TermID t)
+bindVarT v t = do
+  v' <- getRepresentative v
+  mot <- lookupVarT v'
+  nt  <- freshenTerm t
+  whenJust mot $ \ ot -> do
+    let otd = getTermDeps ot
+        ntd = getTermDeps nt
+        tv' = TID $ typedTID @t @e v'
+        lostDeps = HS.difference otd ntd
+        newDeps  = HS.difference ntd otd
+    when (not $ HS.null lostDeps) $ do
+      traverse_ (removeDependency @t tv') $ HS.toList lostDeps
+      markDirty v'
+    when (not $ HS.null newDeps) $ do
+      traverse_ (addDependency    @t tv') $ HS.toList newDeps
+      markDirty v'
+  setTermValue v' nt
+  pure v'
+
+-- | Just sets the term value doesn't do any bookkeeping
+setTermValue :: forall t m e. (IBTM' e t m)
+             => TermID t -> t (TermID t) -> IBRWST m ()
+setTermValue = undefined
+
+-- | Runs through the entire
+getTermDeps :: t (TermID t) -> HashSet InternalID
+getTermDeps = undefined
+
+removeDependency :: forall t m e. (IBTM' e t m)
+               => InternalID -> InternalID -> IBRWST m ()
+removeDependency = undefined
+
+addDependency :: forall t m e. (IBTM' e t m)
+             => InternalID -> InternalID -> IBRWST m ()
+addDependency = undefined
+
+getBoundData :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (BoundState t)
+getBoundData = undefined
+
+setTermData :: forall t m e. (IBTM' e t m)
+            => TermID t -> TermState -> IBRWST m ()
+setTermData i s = termData . at (crushTID i) .= Just s
+
+applyDefaultRules :: forall t m e. (IBTM' e t m)
+                  => TermID t -> IBRWST m ()
+applyDefaultRules = undefined
+
+addToDepGraph :: InternalID -> IBRWST m ()
+addToDepGraph = undefined
+
+cleanTerm :: forall t m e. () => TermID t -> IBRWST m ()
+cleanTerm = undefined
+
+isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
+isDirty = undefined
+
+markDirty :: forall t m e. () => TermID t -> IBRWST m ()
+markDirty = undefined
+
+getRepresentative :: forall t m e. () => TermID t -> IBRWST m (TermID t)
+getRepresentative = undefined
+
+-- | Returns nothing if the terms aren't equal, otherwise it returns a list
+--   of terms that should be unified to unify the input terms.
+--   the returned list is as topologically sorted as possible given the
+--   existence of cycles.
+equalsT :: forall t m e. ()
+   => TermID t -> TermID t -> IBRWST m (Maybe [(TypedVar, TypedVar)])
+equalsT = undefined
+
+-- | unifies all the various terms as needed.
+unifyT :: forall t m e. () => TermID t -> TermID t -> IBRWST m (TermID t)
+unifyT = undefined
+
+-- | Like equalsT but returns the set of subsumptions that need to occour.
+subsumesT :: forall t m e. ()
+  => TermID t -> TermID t -> IBRWST m (Maybe [(TypedVar, TypedVar)])
+subsumesT = undefined
+
+-- | ensures the first term subsumes the second, returns the ident for
+--   the second term .
+subsumeT :: forall t m e. ()
+  => TermID t -> TermID t -> IBRWST m (TermID t)
+subsumeT = undefined
+
+propertyOfT :: forall p t t' m e. ()
+  => p -> TermID t -> IBRWST m (TermID t')
+propertyOfT = undefined
+
+addGeneralRule :: forall e t m. ()
+  => (TermID t -> Rule (IntBindT m) ()) -> IBRWST m ()
+addGeneralRule = undefined
+
+addSpecializedRule :: forall e t m. ()
+  => Rule (IntBindT m) () -> IBRWST m ()
+addSpecializedRule = undefined
+
+type VarIB t m = Var t (IntBindT m)
+
+instance (IBTM e t m) => MonadBind t (IntBindT m) where
+
+  type Var t = VarID t
+
+  freeVar :: IntBindT m (VarIB t m)
+  freeVar = IntBindT $ unpackVID @(IntBindT m) <$> freeVarT
+
+  lookupVar :: VarIB t m -> IntBindT m (Maybe (t (VarIB t m)))
+  lookupVar
+    = IntBindT . ( _ $ unpackVID @t @(IntBindT m))
+    . lookupVarT . crushVID
+
+  bindVar :: VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
+  bindVar v t = IntBindT $ unpackVID @(IntBindT m) <$> bindVarT (crushVID v) (crushVID <$> t)
+
+{-
 
 -- | Create a free var in IBRWST
-freeVarT ::forall t m e. (IBTM' e t m) => IBRWST m (VarIB t m)
+freeVarT ::forall t m e. (IBTM' e t m) => IBRWST m (TermID t)
 freeVarT = do
-  i <- newIdent @(VarIB t m)
+  i <- newIdent @(TermID t)
   setTermState i $ freeTermState i
   pure i
 
--- | When looking up a variable we need to find its representative
---
---   Performs additional bookkeeping.
+-- | When looking up a variable we need to find its representative.
 lookupVarT :: forall t m e. (IBTM' e t m)
-           => VarIB t m -> IBRWST m (Maybe (t (VarIB t m)))
+           => TermID t m -> IBRWST m (Maybe (t (TermID t m)))
 lookupVarT v = do
   v' <- getRepresentative v
   termValue <$> getBoundState v'
 
 -- | Binds a variable to a term, performs additional bookkeeping
+--
+--   TODO :: Bookkeeping?
+--    - Update dependencies, potentially marl
 bindVarT :: forall t m e. (IBTM' e t m)
-         => VarIB t m -> t (VarIB t m) -> IBRWST m (VarIB t m)
+         => TermID t m -> t (TermID t m) -> IBRWST m (TermID t m)
 bindVarT v t = do
     v' <- getRepresentative v
     modifyBoundState v' (pure . modif)
@@ -283,33 +491,16 @@ bindVarT v t = do
   where
     modif s@BoundState{..} = s{termValue = Just t}
 
--- | perform some action if types don't match
-matchType :: forall t t' a. (Typeable t)
-           => TypeRep t' -> a -> (t :~~: t' -> a) -> a
-matchType tr err succ = case eqTypeRep tr (typeRep @t) of
-  Nothing -> err
-  Just HRefl -> succ HRefl
-
--- | Matches a pair of types instead of just one.
-matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
-           => TypeRep t' -> a
-           -> TypeRep m' -> a
-           -> (t :~~: t' -> m :~~: m' -> a)
-           -> a
-matchType2 tt errt tm errm succ =
-  matchType @t tt errt
-    (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
 
 
 
 -- | Ensures that the type of the term state matches the type of the
 --   input variable.
 validateTermStateType :: forall t m e. (IBTM' e t m)
-                      => VarIB t m -> TermState -> IBRWST m ()
+                      => TermID t m -> TermState -> IBRWST m ()
 validateTermStateType _ st = case st of
-  (Bound     trt trm _  ) -> validateTypes trt trm
-  (Forwarded trt trm _  ) -> validateTypes trt trm
-  --(Errored   trt trm _ _) -> validateTypes trt trm
+  (Bound     trt tre _) -> validateTypes trt trm
+  (Forwarded trt tre _) -> validateTypes trt trm
 
   where
 
@@ -327,7 +518,7 @@ validateTermStateType _ st = case st of
 
 -- | Gets the TermState for a variable, without further traversing
 --   the network of connections to get to the final element.
-getTermState :: (IBTM' e t m) => VarIB t m -> IBRWST m TermState
+getTermState :: (IBTM' e t m) => TermID t m -> IBRWST m TermState
 getTermState v = whileGettingTermStateOf v $ do
   td <- termData <$> get
   case IM.lookup (flattenVID v) td of
@@ -339,7 +530,7 @@ getTermState v = whileGettingTermStateOf v $ do
 --   FIXME :: If termState is an error, and the thing to be inserted is an error
 --      merge the errors, otherwise trying to set an errored term should be
 --      a nop
-setTermState :: (IBTM' e t m) => VarIB t m -> TermState -> IBRWST m ()
+setTermState :: (IBTM' e t m) => TermID t m -> TermState -> IBRWST m ()
 setTermState var term = whileSettingTermStateOf var $ do
   validateTermStateType var term
   modify (\ b -> b{termData = IM.insert (flattenVID var) term $ termData b})
@@ -347,7 +538,7 @@ setTermState var term = whileSettingTermStateOf var $ do
 -- | Modifies the term state of something with a function, does not
 --   do additional bookkeeping.
 modifyTermState :: (IBTM' e t m)
-                => VarIB t m
+                => TermID t m
                 -> (TermState -> IBRWST m TermState)
                 -> IBRWST m ()
 modifyTermState v f = getTermState v >>= f >>= setTermState v
@@ -355,7 +546,7 @@ modifyTermState v f = getTermState v >>= f >>= setTermState v
 
 -- | Potentially gets a BoundState for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
-getBoundState :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (BoundStateIB t m)
+getBoundState :: forall t m e. (IBTM' e t m) => TermID t m -> IBRWST m (BoundStateIB t m)
 getBoundState v = getTermState v >>= \case
   (Bound tt tm bs) -> matchType2 @t @(IntBindT m)
      tt (throwInvalidTypeFound tt (typeRep @t))
@@ -365,13 +556,13 @@ getBoundState v = getTermState v >>= \case
 
 -- | Sets the boundState of a trm
 
-setBoundState :: forall t m e. (IBTM' e t m) => VarIB t m -> BoundStateIB t m -> IBRWST m ()
+setBoundState :: forall t m e. (IBTM' e t m) => TermID t m -> BoundStateIB t m -> IBRWST m ()
 setBoundState v n = modifyBoundState v (\ _ -> pure n)
 
 -- | Modifies the bound state of a term, automatically dirties term if
 --   there's a change.
 modifyBoundState :: forall t m e. (IBTM' e t m)
-                 => VarIB t m
+                 => TermID t m
                  -> (BoundStateIB t m -> IBRWST m (BoundStateIB t m))
                  -> IBRWST m ()
 modifyBoundState v f = do
@@ -395,7 +586,7 @@ isBoundStateUpdated old new = case (termValue old, termValue new) of
 
 -- | Potentially gets a forwarded var for a variable throwing an error if the
 --   type is incorrect. Does not traverse to find the final element.
-getForwardingVar :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (Maybe (VarIB t m))
+getForwardingVar :: forall t m e. (IBTM' e t m) => TermID t m -> IBRWST m (Maybe (TermID t m))
 getForwardingVar v = getTermState v >>= \case
   (Forwarded tt tm i) -> matchType2 @t @m
      tt (throwInvalidTypeFound tt (typeRep @t))
@@ -406,7 +597,7 @@ getForwardingVar v = getTermState v >>= \case
 
 --  | Tries to get the error corresponding to a particular term.
 --   Does not try to traverse the forwarding chain.
--- getTermError :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (Maybe e)
+-- getTermError :: forall t m e. (IBTM' e t m) => TermID t m -> IBRWST m (Maybe e)
 -- getTermError v = getTermState v >>= \case
 --  (Errored _ _ te i) -> matchType @e
 --     te (throwInvalidTypeFound te (typeRep @e))
@@ -417,7 +608,7 @@ getForwardingVar v = getTermState v >>= \case
 --
 --   Element returned should always be an Error or a Bound Term.
 --   Forwards paths as needed.
-getRepresentative :: forall t m e. (IBTM' e t m) => VarIB t m -> IBRWST m (VarIB t m)
+getRepresentative :: forall t m e. (IBTM' e t m) => TermID t m -> IBRWST m (TermID t m)
 getRepresentative v = whileGettingRepresentativeOf v $ getForwardingVar v >>= \case
   Nothing -> pure v
   Just v' -> do
@@ -425,18 +616,18 @@ getRepresentative v = whileGettingRepresentativeOf v $ getForwardingVar v >>= \c
     when (v' /= v'') $ setTermState v (Forwarded typeRep typeRep v'')
     pure v''
 
-instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadUnify t (IntBindT m) where
+instance (forall e. IBTM' e t m, Show (t (TermID t m))) => MonadUnify t (IntBindT m) where
 
-  unify :: VarIB t m -> VarIB t m -> IntBindT m (VarIB t m)
+  unify :: TermID t m -> TermID t m -> IntBindT m (TermID t m)
   unify a b = IntBindT $ unifyT a b
 
-  -- equals :: VarIB t m -> VarIB t m -> IntBindT m Bool
+  -- equals :: TermID t m -> TermID t m -> IntBindT m Bool
   -- equals a b = IntBindT $ equalsT a b
 
 
 -- | Unify two terms in IBRWST and return the resulting outcome.
 unifyT :: forall t m e.  (IBTM' e t m)
-       => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+       => TermID t m -> TermID t m -> IBRWST m (TermID t m)
 unifyT a b
   | a == b = pure a
   | otherwise = whileUnifyingTerms a b $ do
@@ -459,7 +650,7 @@ unifyT a b
           unifyLevel a' b'
 
 {-- | Check whether two terms are equivalent up to unification
-equalsT :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
+equalsT :: (IBTM' e t m) => TermID t m -> TermID t m -> IBRWST m Bool
 equalsT a b
   | a == b = pure True
   | otherwise = undefined
@@ -468,29 +659,29 @@ equalsT a b
 -- | Unifies a single level of terms, with the assumption that they are both
 --   representatives of their category, and that all their subterms are properly
 --   unified.
-unifyLevel :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+unifyLevel :: (IBTM' e t m) => TermID t m -> TermID t m -> IBRWST m (TermID t m)
 unifyLevel a b = do
   bsa <- getBoundState a
   modifyBoundState b (mergeBoundState a bsa)
   forwardTo a b
 
 -- | Forwards the first var to the second, returns the second var.
-forwardTo :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+forwardTo :: (IBTM' e t m) => TermID t m -> TermID t m -> IBRWST m (TermID t m)
 forwardTo from to = do
   modifyTermState from (const . pure $ Forwarded typeRep typeRep to)
   pure to
 
 -- | Getting the latest version of a term, by updating all its member variables.
 freshenTerm :: forall t m e. (IBTM' e t m)
-              => t (VarIB t m)
-              -> IBRWST m (t (VarIB t m))
+              => t (TermID t m)
+              -> IBRWST m (t (TermID t m))
 freshenTerm = traverse getRepresentative
 
 -- | If terms are functionally identical, merge them into a new entry.
 equalizeTerms :: forall t m e. (IBTM' e t m)
-              => t (VarIB t m)
-              -> t (VarIB t m)
-              -> IBRWST m (Maybe (t (VarIB t m)))
+              => t (TermID t m)
+              -> t (TermID t m)
+              -> IBRWST m (Maybe (t (TermID t m)))
 equalizeTerms ta tb = do
   ta' <- freshenTerm ta
   tb' <- freshenTerm tb
@@ -501,7 +692,7 @@ equalizeTerms ta tb = do
 -- | Merge two bound states if possible. Can trigger unification of relations.
 --   will verify that subterms are properly unified.
 mergeBoundState :: forall e t m. (IBTM' e t m)
-                => VarIB t m -- ^ from
+                => TermID t m -- ^ from
                 -> BoundStateIB t m -- ^ from
                 -> BoundStateIB t m -- ^ to
                 -> IBRWST m (BoundStateIB t m)
@@ -547,7 +738,7 @@ mergeBoundState fromVar BoundState{termValue=ftv
                    ,Typeable mb, IBTM' e' ta ma, IBTM' e'' tb mb)
                    => TypeRep ta -> TypeRep ma
                    -> TypeRep tb -> TypeRep mb
-                   -> VarIB ta ma -> VarIB tb mb -> IBRWST m TypedVar
+                   -> TermID ta ma -> TermID tb mb -> IBRWST m TypedVar
     mergeTypedVars _ tma ttb tmb va vb = matchType2 @ta @ma
       ttb (throwInvalidTypeFound ttb (typeRep @ta))
       tmb (throwInvalidTypeFound tmb (typeRep @ma))
@@ -599,26 +790,11 @@ withAssumption as act = do
 
     modifyAssumptions b@Context{..} = b{assumes=assumes <> addedAssumptions}
 
--- | Check if two sets of assumptions intersect
-assumingIntersects :: Assuming -> Assuming -> Bool
-assumingIntersects (Assuming a b c) (Assuming a' b' c')
-  = not $  HS.null (HS.intersection a a')
-        && HS.null (HS.intersection b b')
-        && HS.null (HS.intersection c c')
-
-
--- | Get the intersection of two sets of assumptions
-assumingIntersection :: Assuming -> Assuming -> Assuming
-assumingIntersection (Assuming a b c) (Assuming a' b' c')
-  = Assuming (HS.intersection a a')
-             (HS.intersection b b')
-             (HS.intersection c c')
-
 
 -- | Checks whether two terms are marked as having been unified in our
 --   assumptions. If yes, then adds the corresponding unification term
 --   to the read set and moves on.
-assumeUnified :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeUnified :: Monad m => TermID t m -> TermID t m -> IBRWST m Bool
 assumeUnified v v' = (||) <$> check v v' <*> check v' v
 
   where
@@ -631,7 +807,7 @@ assumeUnified v v' = (||) <$> check v v' <*> check v' v
 
 -- | Checks whether we have an assumption of equality, if yes then
 --   writes out the equality to the read set.
-assumeEquals :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeEquals :: Monad m => TermID t m -> TermID t m -> IBRWST m Bool
 assumeEquals v v' = (||) <$> check v v' <*> check v' v
 
   where
@@ -642,14 +818,14 @@ assumeEquals v v' = (||) <$> check v v' <*> check v' v
       when res . tell $ mempty{equal=HS.singleton pair}
       pure res
 
-instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBindT m) where
+instance (forall e. IBTM' e t m, Show (t (TermID t m))) => MonadSubsume t (IntBindT m) where
 
   -- TODO :: Okay so the question is how do we properly recurse? do we
   --        filter step by step, or what.
-  subsume :: VarIB t m -> VarIB t m -> IntBindT m ()
+  subsume :: TermID t m -> TermID t m -> IntBindT m ()
   subsume a b = IntBindT $ subsumeT a b *> skip
 
-  -- subsumes :: VarIB t m -> VarIB t m -> IntBindT m Bool
+  -- subsumes :: TermID t m -> TermID t m -> IntBindT m Bool
   -- subsumes = undefined
     -- Check structuralEquality
     -- check equality and unity assumptions
@@ -660,7 +836,7 @@ instance (forall e. IBTM' e t m, Show (t (VarIB t m))) => MonadSubsume t (IntBin
 -- | This just subsumes one term to another on a one off basis.
 --
 --   TODO :: Clean this up, it's too imperative.
-subsumeT :: forall t m e. (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m (VarIB t m)
+subsumeT :: forall t m e. (IBTM' e t m) => TermID t m -> TermID t m -> IBRWST m (TermID t m)
 subsumeT a b
   | a == b = pure a
   | otherwise = whileSubsumingTerms a b $ do
@@ -691,7 +867,7 @@ subsumeT a b
            pure b'
 
 -- | Checks whether one term is subsumed by another in our assumptions.
-assumeSubsumed :: Monad m => VarIB t m -> VarIB t m -> IBRWST m Bool
+assumeSubsumed :: Monad m => TermID t m -> TermID t m -> IBRWST m Bool
 assumeSubsumed v v' = do
   let pair = (flattenVID v, flattenVID v')
   res <- HS.member pair . subsumed . assumes <$> ask
@@ -699,10 +875,10 @@ assumeSubsumed v v' = do
   pure res
 
 -- | Checks whether a is marked as a subsumed term of b
-hasSubsumed :: (IBTM' e t m) => VarIB t m -> VarIB t m -> IBRWST m Bool
+hasSubsumed :: (IBTM' e t m) => TermID t m -> TermID t m -> IBRWST m Bool
 hasSubsumed a b = do
   a' <- getRepresentative a
-  b' :: VarIB t m <- getRepresentative b
+  b' :: TermID t m <- getRepresentative b
   tis <- subsumedTerms <$> getBoundState a'
   let tl = IS.toList tis
   tl' <- traverse getRepresentative tl
@@ -713,13 +889,13 @@ hasSubsumed a b = do
 instance (Property p t t', IBTM' e t m, IBTM' e t' m)
        => MonadProperty p t t' (IntBindT m) where
 
-  propertyOf :: VarIB t m -> IntBindT m (VarIB t' m)
+  propertyOf :: TermID t m -> IntBindT m (TermID t' m)
   propertyOf v = IntBindT . whileGettingPropertyOf v (typeRep @p) $ do
-    v' :: VarIB t m <- getRepresentative v
+    v' :: TermID t m <- getRepresentative v
     tm :: TypeMap RelMap <- relations <$> getBoundState v'
     case TM.lookup (typeRep @p) tm of
       Nothing -> do
-        nv :: VarIB t' m <- freeVarT
+        nv :: TermID t' m <- freeVarT
         modifyBoundState v' (\ b@BoundState{relations=rl} ->
               pure b{relations= TM.insert (typeRep @p) (tVar nv) rl})
         pure nv
@@ -735,43 +911,14 @@ instance (MonadError e (IntBindT m), MonadAttempt m) => MonadAttempt (IntBindT m
               (\ (a,s,w) -> (((),s,w),a))
               (\ (((),s,w), a) -> (a,s,w))
 
-data History = History
-  { ident :: RuleID
-  , terms :: [TypedVar]
-  } deriving (Eq, Ord, Generic)
-
-instance Hashable History where
-  hashWithSalt s (History ide ts) = hashWithSalt (hashWithSalt s ide) ts
-
-
-data Rule m a where
-  Watch ::
-    { watch :: TypedVar
-    , update :: m [Rule m a]
-    } -> Rule m a
-  Run :: m [Rule m a] -> Rule m a
-  Act :: m a -> Rule m a
-
-type RuleIB m = Rule (IntBindT m)
-
 -- | Stuff that, for now we're just going to assume exists
-instance (Functor m) => GHC.Base.Functor (Rule m) where
-  fmap f (Watch w u) = Watch w ((map . map $ map f) u)
-  fmap f (Run m) = Run $ (map . map $ map f) m
-  fmap f (Act m) = Act . map f $ m
 
-instance (Monad m) => Applicative (Rule m) where
-  pure = Act . pure
-
-  (<*>) = ap
 
 instance (Monad m) => Monad (Rule m) where
   (Act m) >>= k = Run . map (:[]) $ k <$> m
   (Run m) >>= k = Run $ (map $ map (>>= k)) m
   (Watch w u) >>= k = Watch w $ map (map (>>= k)) u
 
-instance (Monad m) => MonadFail (Rule m) where
-  fail _ = Run $ pure []
 
 refreshTVar :: forall m e. (IBM e m)
   => TypedVar -> IBRWST m TypedVar
@@ -793,7 +940,7 @@ refreshRuleSet hm
                             (HM.toList hm)
 
 -- | Adds some rules to the thing.
-addRules :: VarIB t m -> RuleSetIB m -> IBRWST m ()
+addRules :: TermID t m -> RuleSetIB m -> IBRWST m ()
 addRules v s = modifyBoundState v (\ b -> do
                  rs' <- refreshRuleSet $ ruleSet b
                  s' <- HM.filterWithKey
@@ -829,3 +976,4 @@ runRules (HM.toList -> rl) = undefined
 -- | Set of rules that should be triggered when an action happens.
 type RuleSet m = HashMap History (m [Rule m ()])
 type RuleSetIB m = RuleSet (IntBindT m)
+-}

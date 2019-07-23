@@ -12,6 +12,9 @@ Portability : POSIX
 module Ivy.Wrappers.IntGraph where
 
 import Ivy.Prelude
+import Algebra.Graph.AdjacencyIntMap (AdjacencyIntMap)
 import qualified Algebra.Graph.AdjacencyIntMap as G
 
-newtype IntGraph k = IG { getIntGraph :: G.AdjacencyIntMap }
+newtype IntGraph k = IG { getIntGraph :: AdjacencyIntMap }
+
+deriving newtype instance Eq (IntGraph k)

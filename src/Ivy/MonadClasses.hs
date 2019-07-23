@@ -42,8 +42,14 @@ import qualified Data.Text as Text
 --            to manipulate.
 
 -- | Constraints that terms should meet
-type Term e t = (Typeable t, JoinSemiLattice1 e t, Traversable t, Eq1 t
-                , Show1 t)
+type Term e t
+  = ( Typeable t
+    , Typeable e
+    , JoinSemiLattice1 e t
+    , Traversable t
+    , Eq1 t
+    , Show1 t
+    )
 
 -- | Constraints that an int binding monad must meet.
 type IBM e m = (MonadError e m, BindingError e, Typeable m, Typeable e)
