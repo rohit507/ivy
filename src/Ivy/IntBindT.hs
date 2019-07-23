@@ -107,6 +107,7 @@ data Assuming = Assuming {
   , _equal    :: HashSet (TypedVar, TypedVar)
     -- | Assumption that one term subsumes another.
   , _subsumed :: HashSet (TypedVar, TypedVar)
+  , _clean :: HashSet TypedVar
   }
 
 -- | Check if two sets of assumptions intersect
@@ -127,6 +128,7 @@ data Assumption
   = TypedVar `IsUnifiedWith` TypedVar
   | TypedVar `IsEqualTo`     TypedVar
   | TypedVar `IsSubsumedBy`  TypedVar
+  | IsClean TypedVar
 
 -- | Convinient builder for an assumption that strips type information
 isUnifiedWith :: forall t e. (Term e t) => TermID t -> TermID t -> Assumption
@@ -139,6 +141,12 @@ isEqualTo a b = (typedTID @t @e a) `IsEqualTo` (typedTID @t @e b)
 -- | Convinient builder for an assumption that strips type information
 isSubsumedBy :: forall t e. (Term e t) => TermID t -> TermID t -> Assumption
 isSubsumedBy a b = (typedTID @t @e a) `IsSubsumedBy` (typedTID @t @e b)
+
+assumeClean :: forall t e. (Term e t) => TermID t -> Assumption
+assumeClean = IsClean . typedTID @t @e
+
+buildAssuming :: Assumption -> Assuming
+buildAssuming = undefined
 
 instance Semigroup Assuming where
   (Assuming a b c) <> (Assuming a' b' c')
@@ -340,16 +348,12 @@ lookupVarT t = do
       te (throwInvalidTypeFound te (typeRep @e))
       (\ HRefl HRefl -> pure $ bs ^. termValue)
 
-
-freshenVar :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (TermID t)
-freshenVar = undefined
-
 freshenTerm :: forall t m e. (IBTM' e t m) => t (TermID t) -> IBRWST m (t (TermID t))
-freshenTerm = undefined
+freshenTerm = traverse getRepresentative
 
 bindVarT :: forall t m e. (IBTM' e t m) => TermID t -> t (TermID t) -> IBRWST m (TermID t)
 bindVarT v t = do
-  v' <- getRepresentative v
+  v'  <- getRepresentative v
   mot <- lookupVarT v'
   nt  <- freshenTerm t
   whenJust mot $ \ ot -> do
@@ -367,7 +371,7 @@ bindVarT v t = do
   setTermValue v' nt
   pure v'
 
--- | Just sets the term value doesn't do any bookkeeping
+-- | Just sets the term value, doesn't do any bookkeeping
 setTermValue :: forall t m e. (IBTM' e t m)
              => TermID t -> t (TermID t) -> IBRWST m ()
 setTermValue = undefined
@@ -376,6 +380,7 @@ setTermValue = undefined
 getTermDeps :: t (TermID t) -> HashSet InternalID
 getTermDeps = undefined
 
+-- | removes a dependency from the dependency graph
 removeDependency :: forall t m e. (IBTM' e t m)
                => InternalID -> InternalID -> IBRWST m ()
 removeDependency = undefined
@@ -398,14 +403,43 @@ applyDefaultRules = undefined
 addToDepGraph :: InternalID -> IBRWST m ()
 addToDepGraph = undefined
 
-cleanTerm :: forall t m e. () => TermID t -> IBRWST m ()
-cleanTerm = undefined
+-- | This will go on forever if your rules don rules don't settle down
+cleanTerm :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m ()
+cleanTerm t = (view $ toConfig @m) >>= \case
+  Nothing -> panic "invalid config"
+  Just c  -> go 0 t (c ^. maxCyclicUnifications)
+
+  where
+
+    go n t max = do
+      when (n > max) $ panic "Cycle didn't quiesce in time"
+      t' <- getRepresentative t
+      whenM (isDirty t') $ do
+        -- If we can clean up all our child terms
+        markClean t
+        markClean t'
+        cleanDependencies t'
+        applySubsumptions t'
+        runRules t'
+      go (n + 1) t' max
+
+withAssumption :: forall t m e. () => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
+withAssumption = undefined
+
+getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
+getDependencies = undefined
 
 isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
 isDirty = undefined
 
+
+-- | Flags all child terms as dirty as well, stepping through what rules
+--   can modify this term.
 markDirty :: forall t m e. () => TermID t -> IBRWST m ()
 markDirty = undefined
+
+markClean :: forall t m e. () => TermID t -> IBRWST m ()
+markClean = undefined
 
 getRepresentative :: forall t m e. () => TermID t -> IBRWST m (TermID t)
 getRepresentative = undefined
@@ -437,16 +471,17 @@ propertyOfT :: forall p t t' m e. ()
   => p -> TermID t -> IBRWST m (TermID t')
 propertyOfT = undefined
 
-addGeneralRule :: forall e t m. ()
+addGeneralRuleT :: forall t m e. ()
   => (TermID t -> Rule (IntBindT m) ()) -> IBRWST m ()
-addGeneralRule = undefined
+addGeneralRuleT = undefined
 
-addSpecializedRule :: forall e t m. ()
+addSpecializedRuleT :: forall t m e. ()
   => Rule (IntBindT m) () -> IBRWST m ()
-addSpecializedRule = undefined
+addSpecializedRuleT = undefined
 
 type VarIB t m = Var t (IntBindT m)
 
+{-
 instance (IBTM e t m) => MonadBind t (IntBindT m) where
 
   type Var t = VarID t
@@ -462,7 +497,6 @@ instance (IBTM e t m) => MonadBind t (IntBindT m) where
   bindVar :: VarIB t m -> t (VarIB t m) -> IntBindT m (VarIB t m)
   bindVar v t = IntBindT $ unpackVID @(IntBindT m) <$> bindVarT (crushVID v) (crushVID <$> t)
 
-{-
 
 -- | Create a free var in IBRWST
 freeVarT ::forall t m e. (IBTM' e t m) => IBRWST m (TermID t)
