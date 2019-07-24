@@ -89,6 +89,7 @@ getTypedVID :: forall t m e. (Term e t, MonadError e m)
             => TypedVar -> Maybe (VarID t m)
 getTypedVID tvar = unpackVID @m @t <$> getTypedTID @t @e tvar
 
+
 type TVar = TypedVar
 
 data TypedVar where

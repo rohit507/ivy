@@ -175,6 +175,8 @@ recBinOpT check assume handle collapse join inputs = do
       Right tu -> Just <$> (collapse =<< for tu recurse)
 
 
+
+
 -- | Gets a set of operations needed to merge elements.
 --
 --   Params:
