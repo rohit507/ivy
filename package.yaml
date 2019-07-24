@@ -30,6 +30,7 @@ dependencies:
   - data-reify
   - type-map
   - bimap
+  - these
   - concurrent-supply
   - newtype
   - algebraic-graphs

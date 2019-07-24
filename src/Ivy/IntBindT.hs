@@ -164,24 +164,28 @@ instance Monoid Assuming where
 
 -- | Runtime state of our term-graph thing.
 data BindingState = BindingState {
-     _termData      :: HashMap ETID   TermState
+     _termData      :: HashMap TypedVar TermState
    , _ruleData      :: HashMap RuleID RuleState
    , _dependencyMap :: AdjacencyMap InternalID
    -- | A lookup table we use to find the rule corresponding
    --   to some known history. This is generally kept fresh by
    --   traversal when a term is forwarded.
-   , _ruleLookup    :: HashMap RuleHistory RuleID
+   , _ruleLookup    :: RuleHistoryMap
    -- | set of dirty terms that require cleaning.
-   , _dirtySet      :: HashSet ETID
+   , _dirtySet      :: HashSet TypedVar
    , _defaultRules  :: TypeMap RuleMap
    }
 
+-- | This lets us (semi efficiently) look up the latest in carnation of a
+--   given its history.
+type RuleHistoryMap = HashMap RuleID (HashMap [(RuleAction,TypedVar)] RuleID)
 
 -- | A generic identifier that lets us differentiate between terms and rules.
-data InternalID
-  = TID TypedVar
-  | RID RuleID
-  deriving (Eq, Ord, Generic, Hashable)
+type InternalID = Either TypedVar RuleID
+
+pattern TID a = Left  a
+pattern RID a = Right a
+
 
 -- | The unique state information we store for each term.
 data TermState where
@@ -195,11 +199,11 @@ data BoundState t = BoundState {
      -- | Relations from this term to other terms
      , _relations :: TypeMap RelMap
      -- | What terms does this one subsume?
-     , _subsumedTerms :: IntSet (TermID t)
+     , _subsumedTerms :: HashSet (TermID t)
      }
 
 freeBoundState :: (Typeable t) => BoundState t
-freeBoundState = BoundState typeRep Nothing TM.empty IS.empty
+freeBoundState = BoundState typeRep Nothing TM.empty HS.empty
 
 -- | The thunk for a rule itself and its metadata
 data RuleState where
@@ -254,6 +258,7 @@ instance (Monad m) => MonadFail (Rule m) where
 
 -- | the full set of constraints we use here and there
 type IBTM' e t m = (IBTM e t m, MonadBind t (IntBindT m))
+type IBM' e m = (IBM e m)
 
 -- | Newtype for the fully loaded monad transformer.
 type IBRWST = RWST Context Assuming BindingState
@@ -308,7 +313,6 @@ makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config
 makeFieldsNoPrefix ''Assuming
 makeFieldsNoPrefix ''BindingState
-makePrisms ''InternalID
 makePrisms ''TermState
 makeFieldsNoPrefix ''BoundState
 makeFieldsNoPrefix ''RuleHistory
@@ -320,8 +324,6 @@ toConfig :: forall m. (Typeable m) => Getting (Maybe (Config m)) Context (Maybe 
 toConfig = to $ \ (Context tm c _) -> do
   HRefl <- eqTypeRep tm (typeRep @m)
   pure c
-
-
 
 -- | Generate a new internal identifier of some type.
 --
@@ -345,8 +347,8 @@ lookupVarT :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (Maybe (t (Ter
 lookupVarT t = do
   t' :: TermID t <- getRepresentative t
   cleanTerm t'
-  let et' = crushTID t'
-  (use $ termData . at @(HashMap ETID TermState) et') >>= \case
+  let et' = typedTID @t @e t'
+  (use $ termData . at @(HashMap TypedVar TermState) et') >>= \case
     Nothing -> panic " -- throwNonexistentTerm (unpackVID @_ t')"
     Just Forwarded{} -> panic " -- throwExpectedBoundState "
     Just (Bound tt te bs) -> matchType2 @t @e
@@ -368,119 +370,108 @@ bindVarT v t = do
         tv' = TID $ typedTID @t @e v'
         lostDeps = HS.difference otd ntd
         newDeps  = HS.difference ntd otd
-    when (not $ HS.null lostDeps) $ do
-      traverse_ (removeDependency @t tv') $ HS.toList lostDeps
+    unless (HS.null lostDeps) $ do
+      traverse_ (removeDependency @m @e tv') $ HS.toList lostDeps
       markDirty v'
-    when (not $ HS.null newDeps) $ do
-      traverse_ (addDependency    @t tv') $ HS.toList newDeps
+    unless (HS.null newDeps) $ do
+      traverse_ (addDependency    @m @e tv') $ HS.toList newDeps
       markDirty v'
   setTermValue v' nt
   pure v'
 
--- | Just sets the term value, doesn't do any bookkeeping
-setTermValue :: forall t m e. (IBTM' e t m)
-             => TermID t -> t (TermID t) -> IBRWST m ()
-setTermValue = undefined
-
--- | Runs through the entire
-getTermDeps :: t (TermID t) -> HashSet InternalID
-getTermDeps = undefined
-
--- | removes a dependency from the dependency graph
-removeDependency :: forall t m e. (IBTM' e t m)
-               => InternalID -> InternalID -> IBRWST m ()
-removeDependency = undefined
-
-addDependency :: forall t m e. (IBTM' e t m)
-             => InternalID -> InternalID -> IBRWST m ()
-addDependency = undefined
-
-getBoundData :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (BoundState t)
-getBoundData = undefined
-
-setTermData :: forall t m e. (IBTM' e t m)
-            => TermID t -> TermState -> IBRWST m ()
-setTermData i s = termData . at (crushTID i) .= Just s
-
-applyDefaultRules :: forall t m e. (IBTM' e t m)
-                  => TermID t -> IBRWST m ()
-applyDefaultRules = undefined
-
-addToDepGraph :: InternalID -> IBRWST m ()
-addToDepGraph = undefined
-
--- | This will go on forever if your rules don rules don't settle down
-cleanTerm :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m ()
-cleanTerm t = (view $ toConfig @m) >>= \case
-  Nothing -> panic "invalid config"
-  Just c  -> go 0 t (c ^. maxCyclicUnifications)
+-- | forwards the first term to the second, performs what additional bookkeeping
+--   is needed. Returns the freshest new term.
+forwardVarT :: forall t m e. (IBTM' e t m) => TermID t -> TermID t -> IBRWST m (TermID t)
+forwardVarT old new = do
+  o' <- getRepresentative old
+  n' <- getRepresentative new
+  when (o' /= n') $ do
+    let to' = TID $ typedTID @t @e o'
+        tn' = TID $ typedTID @t @e n'
+    -- Move depends from old to new
+    dependencies <- getDependencies o'
+    traverse_ (manageDependencies to' tn') dependencies
+    dependents <- getDependents o'
+    traverse_ (manageDependents to' tn') dependents
+    -- forward subsumptions as needed
+    subsumed <- getSubsumedTerms o'
+    traverse_ (subsumeT n') subsumed
+    -- forward relations as needed
+    forwardRelations o' n'
+    updateRuleHistories o' n'
+    addDependency tn' to'
+  getRepresentative n'
 
   where
 
-    go :: Int -> TermID t -> Int -> IBRWST m ()
-    go n t max = do
-      when (n > max) $ panic "Cycle didn't quiesce in time"
-      t' <- getRepresentative t
-      if (t /= t')
-        then (withAssumption (assumeClean @t @e t) $ cleanTerm t') *> skip
-        else whenM (isDirty t') $ do
-          (dirtied,cyclic) <- withAssumption (assumeClean @t @e t') $ do
-            markClean t'
-            cleanDependencies t'
-            applySubsumptions t'
-            runRules t'
-            isDirty'
-          when cyclic $ go (n + 1) t' max
-      markClean t
+    manageDependencies old new dep = do
+      removeDependency dep old
+      addDependency    dep new
 
-isDirty :: forall t m e. () => TermID t -> IBRWST m Bool
-isDirty = undefined
+    manageDependents old new dep = do
+      removeDependency old dep
+      addDependency    new dep
 
-withAssumption :: forall a m e. () => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
-withAssumption = undefined
-
-getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
-getDependencies = undefined
-
-getDependents :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
-getDependents = undefined
-
-applySubsumptions :: forall t m e. () => TermID t -> IBRWST m ()
-applySubsumptions = undefined
-
-cleanDependencies :: forall t m e. () => TermID t -> IBRWST m ()
-cleanDependencies = undefined
-
-runRules :: forall t m e. () => TermID t -> IBRWST m ()
-runRules = undefined
-
--- | Flags all child terms as dirty as well, stepping through what rules
---   can modify this term.
-markDirty :: forall t m e. () => TermID t -> IBRWST m ()
-markDirty = undefined
-
-markClean :: forall t m e. () => TermID t -> IBRWST m ()
-markClean = undefined
-
-getRepresentative :: forall t m e. () => TermID t -> IBRWST m (TermID t)
-getRepresentative = undefined
+-- | a list of operations to perform
+type OpSet = HashSet (TypedVar, TypedVar)
+type UnificationSet = OpSet
 
 -- | Returns nothing if the terms aren't equal, otherwise it returns a list
 --   of terms that should be unified to unify the input terms.
---   the returned list is as topologically sorted as possible given the
---   existence of cycles.
-equalsT :: forall t m e. ()
-   => TermID t -> TermID t -> IBRWST m (Maybe [(TypedVar, TypedVar)])
+equalsT :: forall t m e. (IBTM' e t m)
+   => TermID t -> TermID t -> IBRWST m (Maybe UnificationSet)
 equalsT = undefined
+
+-- | Gets a set of operations needed to merge elements.
+--   Params:
+--    - `TermID t -> TermID t -> Assumption`
+--       - Assumption used when we recurse
+--    - `These (TermID t) (TermID t) -> IBRWST m a`
+--       - operation to extract something from a pair of terms
+--    - `t a -> a`
+--       - collapses the result of running the join operation on a
+--         set of terms.
+--
+--   This won't throw an error if none of the passed functions would.
+--   It's expected that y:s
+recursiveOpT :: forall a t m e. (Monoid a, IBTM' e t m)
+   => (TermID t -> TermID t -> Assumption)
+   -> (These (TermID t) (TermID t) -> IBRWST m a)
+   -> (t a -> a)
+   -> TermID t
+   -> TermID t
+   -> IBRWST m a
+recursiveOpT assume joinOp collapse a b = do
+  a' <- getRepresentative a
+  b' <- getRepresentative b
+  subRes :: Maybe a <- withAssumption_ (assume a' b') $ do
+    mta <- lookupVarT a'
+    mtb <- lookupVarT b'
+    joinSeq <- sequenceA $ gatherSubPairs <$> mta <*> mtb
+    map (map collapse) . sequenceA . map (traverse joinOp) $ joinSeq
+  ((<>) $ fromMaybe mempty subRes) <$> joinOp (These a' b')
+
+  where
+
+    gatherSubPairs :: t (TermID t)
+                   -> t (TermID t)
+                   -> IBRWST m (t (These (TermID t) (TermID t)))
+    gatherSubPairs a b = case liftLatJoin  a b of
+      Left e -> throwError e
+      Right r -> pure r
+
+
+-- | Checks all the properties of each input term and returns
+equalsPropT :: forall t m e. (IBTM' e t m)
+   => TermID t -> TermID t -> IBRWST m (Maybe UnificationSet)
+equalsPropT = undefined
+
 
 -- | unifies all the various terms as needed.
 unifyT :: forall t m e. () => TermID t -> TermID t -> IBRWST m (TermID t)
 unifyT = undefined
 
--- | Like equalsT but returns the set of subsumptions that need to occour.
-subsumesT :: forall t m e. ()
-  => TermID t -> TermID t -> IBRWST m (Maybe [(TypedVar, TypedVar)])
-subsumesT = undefined
+
 
 -- | ensures the first term subsumes the second, returns the ident for
 --   the second term .
@@ -499,6 +490,139 @@ addGeneralRuleT = undefined
 addSpecializedRuleT :: forall t m e. ()
   => Rule (IntBindT m) () -> IBRWST m ()
 addSpecializedRuleT = undefined
+forwardRuleT :: RuleID -> RuleID -> IBRWST m RuleID
+forwardRuleT old new = undefined
+
+-- | Applies a forwarded term to the rule history map, and prunes the rule list
+--   as needed.
+updateRuleHistories :: forall t m e. (IBTM' e t m)
+  => TermID t -> TermID t -> IBRWST m ()
+updateRuleHistories = undefined
+
+forwardRelations :: forall t m e. (IBTM' e t m)
+  => TermID t -> TermID t -> IBRWST m ()
+forwardRelations = undefined
+
+getSubsumedTerms :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (HashSet (TermID t))
+getSubsumedTerms = undefined
+
+-- | Just sets the term value, doesn't do any bookkeeping
+setTermValue :: forall t m e. (IBTM' e t m)
+             => TermID t -> t (TermID t) -> IBRWST m ()
+setTermValue = undefined
+
+-- | Runs through the entire
+getTermDeps :: t (TermID t) -> HashSet InternalID
+getTermDeps = undefined
+
+type Dependency = InternalID
+type Dependent = InternalID
+
+-- | removes a dependency from the dependency graph, errors if the
+--   dependency does not exist.
+removeDependency :: forall m e. (IBM' e m)
+               => Dependency -> Dependent -> IBRWST m ()
+removeDependency _dependent _depender = undefined
+
+addDependency :: forall m e. (IBM' e m)
+             => Dependency -> Dependent -> IBRWST m ()
+addDependency _ _to = undefined
+
+getBoundData :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (BoundState t)
+getBoundData = undefined
+
+setTermData :: forall t m e. (IBTM' e t m)
+            => TermID t -> TermState -> IBRWST m ()
+setTermData i s = termData . at (typedTID @t @e i) .= Just s
+
+applyDefaultRules :: forall t m e. (IBTM' e t m)
+                  => TermID t -> IBRWST m ()
+applyDefaultRules = undefined
+
+addToDepGraph :: InternalID -> IBRWST m ()
+addToDepGraph = undefined
+
+-- | This will go on forever if your rules don rules don't settle down
+cleanTerm :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m ()
+cleanTerm t = (view $ toConfig @m) >>= \case
+  Nothing -> panic "invalid config"
+  Just c  -> go 0 t (c ^. maxCyclicUnifications)
+
+  where
+
+    go :: Int -> TermID t -> Int -> IBRWST m ()
+    go n t maxi = do
+      when (n > maxi) $ panic "Cycle didn't quiesce in time"
+      t' <- getRepresentative t
+      if (t /= t')
+        then (withAssumption (assumeClean @t @e t) $ cleanTerm t') *> markClean t
+        else whenM (isDirty t') $ do
+          _ <- withAssumption (assumeClean @t @e t') $ do
+            -- We mark the term as clean here, so that any changes to the term
+            -- will dirty it. Keep in mind that marking a term as dirty or clean
+            -- does not pay ant attention to assumptions
+            markClean t'
+            cleanDependencies t'
+            applySubsumptions t'
+            runRuleDependencies t'
+          go (n + 1) t' maxi
+
+isDirty :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m Bool
+isDirty (typedTID @t @e -> t)
+  =  (not <$> isAssumedClean  @t @m @e t)
+  ||^ (HS.member t <$> use dirtySet)
+
+isAssumedClean :: forall t m e. (IBTM' e t m) => TypedVar -> IBRWST m Bool
+isAssumedClean t = do
+  let cleanAssumption = buildAssuming $ IsClean t
+  result <- assumingIntersects cleanAssumption . _assumptions <$> ask
+  when result $ tell cleanAssumption
+  pure result
+
+withAssumption :: forall a m e. (IBM' e m) => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
+withAssumption (buildAssuming -> added) act = do
+   ((),w) <- listen skip
+   local modifyAssumptions $ do
+     (a,w') <- censor (const w) $ listen act
+     tell $ assumingIntersection w w'
+     pure (a, assumingIntersects w' added)
+
+  where
+
+    modifyAssumptions b@Context{..} = b{_assumptions=_assumptions <> added}
+
+withAssumption_ :: forall a m e. (IBM' e m)
+   => Assumption -> IBRWST m a -> IBRWST m a
+withAssumption_ added act = do
+  (a,_) <- withAssumption @a added act
+  pure a
+
+getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
+getDependencies = undefined
+
+getDependents :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
+getDependents = undefined
+
+applySubsumptions :: forall t m e. () => TermID t -> IBRWST m ()
+applySubsumptions = undefined
+
+cleanDependencies :: forall t m e. () => TermID t -> IBRWST m ()
+cleanDependencies = undefined
+
+runRuleDependencies :: forall t m e. () => TermID t -> IBRWST m ()
+runRuleDependencies = undefined
+
+-- | Flags all child terms as dirty as well, stepping through what rules
+--   can modify this term.
+markDirty :: forall t m e. () => TermID t -> IBRWST m ()
+markDirty = undefined
+
+markClean :: forall t m e. () => TermID t -> IBRWST m ()
+markClean = undefined
+
+getRepresentative :: forall t m e. () => TermID t -> IBRWST m (TermID t)
+getRepresentative = undefined
+
 
 type VarIB t m = Var t (IntBindT m)
 

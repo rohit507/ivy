@@ -88,11 +88,7 @@ class JoinSemiLattice1 e l where
   --
   --   NOTE :: We force you to use the join operation non-commutatively
   --          because we might need to handle each input differently.
-  liftLatJoin   :: (Monad m)
-                => (a -> m c)
-                -> (b -> m c)
-                -> (a -> b -> m c)
-                -> l a -> l b -> m (Either e (l c))
+  liftLatJoin :: l a -> l b -> Either e (l (These a b))
 
 
 class MeetSemiLattice1 l where

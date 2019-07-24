@@ -286,7 +286,8 @@ class BindingError e where
 
   -- Cycle didn't quiesce in time
   -- CleaningTerm
-
+  -- CheckingTerm equality
+  -- CheckingTerm subsumability
 addErrorCtxt :: Text -> Text -> Text
 addErrorCtxt ctxt = Text.unlines . (ctxt :) . map (Text.append "  ") . Text.lines
 
