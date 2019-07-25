@@ -19,7 +19,6 @@ module Ivy.Prelude (
   , matchType
   , matchType2
   , mappendMaybe
-  , MonoidMaybe
 ) where
 
 import Intro as P hiding (Item)
@@ -39,21 +38,6 @@ import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
 import Data.These as P hiding (swap)
-
-
--- | a newtype which lifts the monoid in m into Maybe m while leaving Nothing
---   as an error case which explodes.
-newtype MonoidMaybe m = MM { getMM :: Maybe m }
-
-instance Newtype (MonoidMaybe m) (Maybe m) where
-  pack = MM
-  unpack = getMM
-
-instance (Semigroup m) => Semigroup (MonoidMaybe m) where
-  (MM a) <> (MM b) = MM $ (<>) <$> a <*> b
-
-instance (Monoid m) => Monoid (MonoidMaybe m) where
-  mempty = MM $ Just mempty
 
 
 whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
