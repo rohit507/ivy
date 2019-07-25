@@ -19,6 +19,7 @@ module Ivy.Prelude (
   , matchType
   , matchType2
   , mappendMaybe
+  , mappendMaybes
 ) where
 
 import Intro as P hiding (Item)
@@ -70,6 +71,8 @@ censor f m = pass $ do
     a <- m
     pure (a, f)
 
+mappendMaybes :: (Monoid p) => [Maybe p] -> Maybe p
+mappendMaybes = foldr mappendMaybe (Just mempty)
 
 mappendMaybe :: (Semigroup p) => Maybe p -> Maybe p -> Maybe p
 mappendMaybe a b = (<>) <$> a <*> b

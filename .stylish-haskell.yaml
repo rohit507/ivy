@@ -262,6 +262,7 @@ language_extensions:
   - PackageImports
   - PatternSynonyms
   - QuasiQuotes
+  - QuantifiedConstraints
   - RankNTypes
   - RecordWildCards
   - RecursiveDo

@@ -40,7 +40,8 @@ library:
   source-dirs: src
   exposed-modules:
     - Ivy.Prelude
-    - Ivy.Scratchpad
+    - Ivy.MonadClasses
+    - Ivy.IntBindT
 
 tests:
   tasty:
