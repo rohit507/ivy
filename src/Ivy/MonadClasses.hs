@@ -249,26 +249,32 @@ unify a b = recBinOp context (These a b)
     unifyProp a b = unify @e @t' @m a b *> skip
 
 
-subsume' :: forall e t r. (MonadRule e r r, MonadAssume e t r)
+subsume' :: forall e t r. ( MonadRule e r r
+                         , MonadAssume e t r
+                         , JoinSemiLattice1 e t)
         => Var r t -> Var r t -> r (Var r t)
 subsume' = subsume
 
 -- | Subsumes the first term to the second, returns the second.
-subsume :: forall e t r m. (MonadRule e r m, MonadRule e r r, MonadAssume e t m,
-                          Var r ~ Var m)
+subsume :: forall e t r m. ( MonadRule e r m
+                          , MonadBind e t m
+                          , MonadBind e t r
+                          , MonadAssume e t r
+                          , JoinSemiLattice1 e t
+                          , Var r ~ Var m)
         => Var r t -> Var r t -> m (Var r t)
-subsume a b = addRule (performSubsume a b) *> pure b
+subsume a b = (addRule $ performSubsume a b) *> pure b
 
   where
 
     performSubsume :: Var r t -> Var r t -> r (Var r t)
-    performSubsume = recBinOp context $ These a b
+    performSubsume a b = recBinOp context (These a b)
 
     context :: BinOpContext (Var r t) (t (Var r t)) e t r
     context = BinOpContext{..}
 
     check :: These (Var r t) (Var r t) -> r (Maybe (Var r t))
-    check (This a) = Just <$> (subsume' a =<< freeVar)
+    check (This a) = Just <$> (performSubsume a =<< freeVar)
     check (That b) = pure $ Just b
     -- Even if a does subsume b, then we must assume that
     check (These a b) = pure Nothing
