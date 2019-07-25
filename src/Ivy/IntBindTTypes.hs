@@ -38,14 +38,14 @@ import Data.IORef
 import Control.Concurrent.Supply
 
 -- | Uninhabited type we use for our Item family.
-data RelMap
-type instance TM.Item RelMap t = TypedVar
+data PropMap
+type instance TM.Item PropMap t = TypedVar
 
 data RuleMap
 type instance TM.Item RuleMap t = DefaultRule t
 
 data DefaultRule t where
-  DR :: TypeRep m -> [TermID t -> Rule (IntBindT m) ()] -> DefaultRule t
+  DR :: TypeRep m -> [(RuleID, TermID t -> Rule (IntBindT m) ())] -> DefaultRule t
 
 data Context where
   Context :: forall m. (Monad m, Typeable m) =>
@@ -192,7 +192,7 @@ data BoundState t = BoundState {
        _termType :: TypeRep t
      , _termValue :: Maybe (t (TermID t))
      -- | Relations from this term to other terms
-     , _relations :: TypeMap RelMap
+     , _relations :: TypeMap PropMap
      -- | What terms does this one subsume?
      , _subsumedTerms :: HashSet (TermID t)
      }
@@ -209,8 +209,8 @@ data RuleState where
 
 -- | The history of a rule which, when freshened, served as a unique identifier.
 data RuleHistory = RuleHistory
-  { _ident :: RuleID -- The identifier of the initial rule in the history
-  , _terms :: [(RuleAction,TypedVar)] -- A list of variables that are touched
+  { _initial :: RuleID -- The identifier of the initial rule in the history
+  , _terms   :: [(RuleAction,TypedVar)] -- A list of variables that are touched
   } deriving (Eq, Ord, Generic, Hashable)
 
 -- | The type of action this rule performed on a given variable.

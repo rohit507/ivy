@@ -44,6 +44,7 @@ import qualified Data.Text as Text
 -- | Constraints that terms should meet
 type Term e t
   = ( Typeable t
+    , Typeable (Var t)
     , Typeable e
     , JoinSemiLattice1 e t
     , Traversable t

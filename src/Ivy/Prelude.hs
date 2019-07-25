@@ -22,7 +22,7 @@ module Ivy.Prelude (
   , MonoidMaybe
 ) where
 
-import Intro as P
+import Intro as P hiding (Item)
 import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)
@@ -35,11 +35,11 @@ import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
 import Control.Newtype as P
-import GHC.Exts as P (fromListN)
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
 import Data.These as P hiding (swap)
+
 
 -- | a newtype which lifts the monoid in m into Maybe m while leaving Nothing
 --   as an error case which explodes.

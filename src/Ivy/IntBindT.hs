@@ -26,7 +26,7 @@ import Ivy.Wrappers.IDs
 
 import Data.Bimap (Bimap)
 import qualified Data.Bimap as BM
-import Data.TypeMap.Dynamic (TypeMap, Item)
+import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
 import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -41,7 +41,6 @@ import qualified Control.Monad.Fail (fail)
 import Control.Monad (ap)
 import Data.IORef
 import Control.Concurrent.Supply
-
 
 -- | a getter for typed config data
 toConfig :: forall m. (Typeable m) => Getting (Maybe (Config m)) Context (Maybe (Config m))
@@ -62,6 +61,7 @@ freeVarT = do
   setTermData v (Bound typeRep (typeRep @e) $ freeBoundState @t)
   applyDefaultRules v
   addToDepGraph (TID $ typedTID @t @e v)
+  markDirty v
   pure v
 
 -- | Looks up a variable after ensuring that it's been cleaned and updated.
@@ -139,17 +139,38 @@ type TheseVars t = These (TermID t) (TermID t)
 -- | A generalized recursive binary operation that we can use to implement
 --   equalsT, unionT, and the like.
 recBinOpT :: forall a b t m e. (IBTM' e t m)
-          => (TheseVars t -> Maybe a)
-          -> (forall c. TheseVars t -> IBRWST m c -> IBRWST m c)
+          => (TheseVars t -> IBRWST m (Maybe a))
+          -- ^ check: short circuits op unless Nothing is returned
+          -> (TheseVars t -> IBRWST m (Maybe b) -> IBRWST m (Maybe b))
+          -- ^ assume: assumption to apply when recursing into child
           -> (e -> IBRWST m b)
+          -- ^ handle: handle errors during a join
           -> (t a -> IBRWST m b)
+          -- ^ collapse: collapse a term into a useful result
           -> (TheseVars t -> Maybe b -> IBRWST m a)
-          -> TheseVars t -> IBRWST m a
-recBinOpT check assume handle collapse join inputs = do
+          -- ^ merge: final op on input terms
+          -> TheseVars t
+          -- ^ inputs: The input terms.
+          -> IBRWST m a
+recBinOpT check assume handle collapse merge inputs = do
   reps <- bitraverseThese getRepresentative getRepresentative inputs
-  flip maybeM (check reps) $ do
-    subterm :: Maybe b <- assume reps $
-      bitraverseThese lookupVarT lookupVarT reps >>= \case
+  recBinOpG lookupVarT check assume handle collapse merge inputs
+
+-- | A recursive binary op even further generalized to the point that
+--   every major operation is pulled from an input
+recBinOpG :: forall v a b t m e. (Monad m, Traversable t, JoinSemiLattice1 e t)
+          => (v -> m (Maybe (t v)))
+          -> (These v v -> m (Maybe a))
+          -> (These v v -> m (Maybe b) -> m (Maybe b))
+          -> (e -> m b)
+          -> (t a -> m b)
+          -> (These v v -> Maybe b -> m a)
+          -> These v v
+          -> m a
+recBinOpG lookup check assume handle collapse merge inputs = do
+  flip maybeM (check inputs) $ do
+    subterm :: Maybe b <- assume inputs $
+      bitraverseThese lookup lookup inputs >>= \case
         --
         This Nothing   -> nothingCase
         This (Just ta) -> thisCase ta
@@ -161,66 +182,19 @@ recBinOpT check assume handle collapse join inputs = do
         These (Just ta) Nothing   -> thisCase ta
         These Nothing   (Just tb) -> thatCase tb
         These (Just ta) (Just tb) -> theseCase ta tb
-    join reps subterm
+    merge inputs subterm
 
   where
 
-    recurse = recBinOpT check assume handle collapse join
+    recurse :: These v v -> m a
+    recurse = recBinOpG lookup check assume handle collapse merge
 
     nothingCase = pure Nothing
-    thisCase ta = Just <$> (collpase =<< for ta $ recurse . This)
-    thatCase tb = Just <$> (collpase =<< for tb $ recurse . That)
+    thisCase ta = Just <$> (collapse =<< (for ta $ recurse . This))
+    thatCase tb = Just <$> (collapse =<< (for tb $ recurse . That))
     theseCase ta tb = Just <$> case liftLatJoin ta tb of
       Left e -> handle e
-      Right tu -> Just <$> (collapse =<< for tu recurse)
-
-
--- | Gets a set of operations needed to merge elements.
---
---   Params:
---    - `TermID t -> TermID t -> Assumption`
---       - Assumption used when we recurse
---    - `These (TermID t) (TermID t) -> IBRWST m a`
---       - operation to extract an a from some terms, should not itself be
---         recursive.
---
---   This won't throw an error or modify state if none of the passed functions
---   would.
---
---   We also assume that
---
-recursiveOpT :: forall a b t m e. (IBTM' e t m)
-   => (TermID t -> TermID t -> Assumption)
-   -> (TermMaybe b -> IBRWST m a)
-   -> (TermID t -> TermID t -> IBRWST m (Maybe a))
-   -> (e -> IBRWST m b)
-   -> (t a -> IBRWST m b)
-   -> TermID t
-   -> TermID t
-   -> IBRWST m a
-recursiveOpT assume joinOp check handle collapse a b = do
-  a' <- getRepresentative a
-  b' <- getRepresentative b
-  check a b >>= \case
-    Just a -> pure a
-    Nothing -> withAssumption_ (assume a' b') $ do
-      mta <- lookupVarT a'
-      mtb <- lookupVarT b'
-      case (mta , mtb) of
-        (Nothing, Nothing) <- undefined
-        (Just ta, Nothing) <- undefined
-        (Nothing, Just tb) <- undefined
-        (Just ta, Just tb) <- do
-          case liftLatJoin ta tb of
-            Left e     -> handle e
-            Right term -> collapse =<< for term recurse
-      joinOp (These a' b') subRes
-
-  where
-
-    recurse (These a b)
-      = recursiveOpT assume joinOp check handle collapse a b
-    recurse o = joinOp Nothing o
+      Right tu -> collapse =<< for tu recurse
 
 -- | a list of operations to perform
 type OpSet = HashSet (TypedVar, TypedVar)
@@ -231,95 +205,213 @@ type SubsumptionSet = OpSet
 --   of terms that should be unified to unify the input terms.
 equalsT :: forall t m e. (IBTM' e t m)
    => TermID t -> TermID t -> IBRWST m (Maybe UnificationSet)
-equalsT a b = unpack <$>
-  recursiveOpT (isEqualTo @t @e) joinOp check handle collapse a b
+equalsT a b = recBinOpT check assume handle collapse merge (These a b)
 
   where
-
-    collapse _ _ = pure . fold
-
-    check a b =
+    check (These a b) =
       ifM (pure (a == b) ||^ isAssumedEqual a b ||^ isAssumedUnified a b)
-         (pure $ Just mempty) (pure Nothing)
+          (pure . Just $ Just mempty) (pure Nothing)
+    check _ = pure . Just $ Just mempty
 
-    joinOp :: These (TermID t) (TermID t) -> Maybe (MonoidMaybe OpSet) -> IBRWST m (MonoidMaybe OpSet)
-    joinOp (This _) _ = pure mempty
-    joinOp (That _) _ = pure mempty
-    joinOp (These a b) meta
-      = let base = pack . Just $ HS.singleton (typedTID @t @e a, typedTID @t @e b)
-            mm = base <> (fromMaybe mempty meta)
-            in (<> mm) . pack <$> equalsPropT a b
+    assume (These a b) = withAssumption @_ @_ @e (isEqualTo @t @e a b)
+    assume _ = id
 
-    handle _ = pure $ pack Nothing
+    handle _ = pure $ Nothing
 
--- | ensures the first term subsumes the second, returns the ident for
---   the second term .
-subsumesT :: forall t m e. (IBTM' e t m)
-  => TermID t -> TermID t -> IBRWST m (Maybe SubsumptionSet)
-subsumesT a b = unpack <$>
-  recursiveOpT (isSubsumedBy @t @e) joinOp check handle collapse a b
+    collapse :: t (Maybe OpSet) -> IBRWST m (Maybe OpSet)
+    collapse term = pure $ foldr mappendMaybe (Just mempty) term
 
-  where
 
-    collapse _ _ = pure . fold
+    ta = typedTID @t @e a
+    tb = typedTID @t @e b
 
-    check a b =
-      ifM (pure (a == b) ||^ isAssumedUnified a b ||^ isAssumedSubsumed a b)
-         (pure $ Just mempty) (pure Nothing)
+    merge :: TheseVars t -> Maybe (Maybe OpSet) -> IBRWST m (Maybe OpSet)
+    merge (This _) meq = pure $ join meq
+    merge (That _) meq = pure $ join meq
+    merge (These _ _) meq = do
+      let eqs = mappendMaybe (Just $ HS.singleton (ta,tb)) (join meq)
+      (`mappendMaybe` eqs) <$> equalsPropsT a b
 
-    joinOp :: These (TermID t) (TermID t) -> Maybe (MonoidMaybe OpSet) -> IBRWST m (MonoidMaybe OpSet)
-    joinOp (This _) _ = pure mempty
-    joinOp (That _) _ = pure mempty
-    joinOp (These a b) meta
-      = pure . ((<>) $ fromMaybe mempty meta)
-      . pack . Just $ HS.singleton (typedTID @t @e a, typedTID @t @e b)
-
-    handle _ = pure $ pack Nothing
 
 -- | unifies all the various terms as needed.
 unifyT :: forall t m e. (IBTM' e t m) => TermID t -> TermID t -> IBRWST m (TermID t)
-unifyT a b =
-  recursiveOpT (isUnifiedWith @t @e) joinOp check throwError collapse a b
+unifyT a b = recBinOpT check assume handle collapse merge (These a b)
+  where
+
+    check (This a) = pure $ Just a
+    check (That b) = pure $ Just b
+    check (These a b) = ifM (pure (a == b) ||^ isAssumedUnified a b)
+      (pure $ Just b) (pure $ Nothing)
+
+    assume (These a b) = withAssumption (isEqualTo @t @e a b)
+    assume _ = panic "invariant broken: check skips any non-These inputs"
+
+    handle = throwError
+
+    collapse = pure
+
+    merge (These a b) mTerm = do
+      unifyPropsT a b
+      forwardVarT a =<< maybe (pure b) (bindVarT b) mTerm
+    merge _ _ = panic "invariant broken: check skips any non-These inputs"
+
+-- | Asserts that the first term subsumes the second. Returns the second term.
+subsumeT :: forall t m e. (IBTM' e t m) => TermID t -> TermID t -> IBRWST m (TermID t)
+subsumeT a b = recBinOpT check assume handle collapse merge (These a b)
+  where
+
+    -- if we've only got the subsumed side of the term then we should create
+    -- a free variable that can be any greater value.
+    check (This a) = Just <$> (subsumeT a =<< freeVarT)
+    check (That b) = pure $ Just b
+    check (These a b) =
+      ifM (pure (a == b) ||^ inSubsumeSet a b
+            ||^ isAssumedUnified a b ||^ isAssumedSubsumed a b )
+          (pure $ Just b)
+          -- If b <= a and a <= b then a == b
+          (ifM (inSubsumeSet b a) (Just <$> unifyT a b) (pure Nothing))
+
+    assume (These a b) = withAssumption (isSubsumedBy @t @e a b)
+    assume _ = panic "invariant broken: check skips any non-These inputs"
+
+    handle = throwError
+
+    collapse = pure
+
+    merge (These a b) mTerm
+      = addToSubsumeSet a =<< maybe (pure b) (bindVarT b) mTerm
+
+-- | Checks all the properties of each input term and returns those that
+--   need to be unified.
+equalsPropsT :: forall t m e. (IBTM' e t m)
+   => TermID t -> TermID t -> IBRWST m (Maybe UnificationSet)
+equalsPropsT a b = do
+  pma <- getPropMap a
+  pmb <- getPropMap b
+  let intersectionMap :: TypeMap (OfType ())
+        = TM.intersection (TM.map empty pma) pmb
+  sets :: TypeMap (OfType (Maybe OpSet)) <- TM.traverse (getOp pma pmb) intersectionMap
+  pure $ foldr mappendMaybe (Just mempty) (TM.toList sets)
 
   where
-    check a b = ifM (pure (a == b) ||^ isAssumedUnified a b)
-      (pure . Just b) (pure Nothing)
 
-    collapse = id
+    empty :: forall t a. (Typeable t)
+       => Proxy t -> a -> ()
+    empty _ _ = ()
 
-    joinOp (This a) _ = pure a
-    joinOp (That b) _ = pure b
-    joinOp (These a b) Nothing =
+    getOp :: forall (g :: Type). (Typeable g)
+          => TypeMap PropMap
+          -> TypeMap PropMap
+          -> Proxy g
+          -> ()
+          -> IBRWST m (Maybe OpSet)
+    getOp rma rmb p _ = map join . sequenceA $ do
+      (TVar tta tea ta) <- TM.lookup @g @PropMap typeRep rma
+      (TVar ttb teb tb) <- TM.lookup @g @PropMap typeRep rmb
+      HRefl <- eqTypeRep tta ttb
+      HRefl <- eqTypeRep tea teb
+      HRefl <- eqTypeRep tea (typeRep @e)
+      Just $ equalsT @_ @m @e ta tb
 
+-- | Since each property is a function we need to ensure that the
+--   properties of unified terms are themselves unified.
+unifyPropsT :: forall t m e. (IBTM' e t m)
+   => TermID t -> TermID t -> IBRWST m ()
+unifyPropsT a b = do
+  pma <- getPropMap a
+  pmb <- getPropMap b
+  let intersectionMap :: TypeMap (OfType ())
+        = TM.intersection (TM.map empty pma) pmb
+  _ :: TypeMap (OfType ()) <- TM.traverse (unifyOp pma pmb) intersectionMap
+  skip
 
--- | Checks all the properties of each input term and returns
-equalsPropT :: forall t m e. (IBTM' e t m)
-   => TermID t -> TermID t -> IBRWST m (Maybe UnificationSet)
-equalsPropT = undefined
+  where
 
+    empty :: forall t a. (Typeable t)
+       => Proxy t -> a -> ()
+    empty _ _ = ()
 
+    unifyOp :: forall (g :: Type). (Typeable g)
+          => TypeMap PropMap
+          -> TypeMap PropMap
+          -> Proxy g
+          -> ()
+          -> IBRWST m ()
+    unifyOp rma rmb p _ = fromMaybe (panic "unreachable") $ do
+      (TVar tta tea ta) <- TM.lookup @g @PropMap typeRep rma
+      (TVar ttb teb tb) <- TM.lookup @g @PropMap typeRep rmb
+      HRefl <- eqTypeRep tta ttb
+      HRefl <- eqTypeRep tea teb
+      HRefl <- eqTypeRep tea (typeRep @e)
+      Just $ unifyT @_ @m @e ta tb *> skip
 
-
-
--- | ensures the first term subsumes the second, returns the ident for
---   the second term .
-subsumeT :: forall t m e. ()
-  => TermID t -> TermID t -> IBRWST m (TermID t)
-subsumeT = undefined
-
-propertyOfT :: forall p t t' m e. ()
+-- | Gets a property of p, if said property does not exist, then creates a
+--   free Variable for it.
+propertyOfT :: forall p t t' m e. (Property p t t', IBTM' e t m, IBTM' e t' m)
   => p -> TermID t -> IBRWST m (TermID t')
-propertyOfT = undefined
+propertyOfT p t = do
+  pm <- getPropMap =<< getRepresentative t
+  case (TM.lookup (typeRep @p) pm) of
+    Just (TVar tt te t) -> matchType2 @t' @e
+      tt (throwInvalidTypeFound tt (typeRep @t'))
+      te (throwInvalidTypeFound te (typeRep @e ))
+      (\ HRefl HRefl -> pure t)
+    Nothing -> do
+      t' :: TermID t' <- freeVarT
+      addProp p t t'
+      pure t'
 
-addGeneralRuleT :: forall t m e. ()
-  => (TermID t -> Rule (IntBindT m) ()) -> IBRWST m ()
-addGeneralRuleT = undefined
+addGeneralRuleT :: forall t m e. (IBTM' e t m)
+  => (VarIB t m -> Rule (IntBindT m) ()) -> IBRWST m ()
+addGeneralRuleT rule = do
+  rid <- newIdent
+  addToDefaultRules rid (rule . unpackVID)
+  traverse_ (addSpecializedRuleT rid . rule . unpackVID) =<< getAllTerms @t
 
-addSpecializedRuleT :: forall t m e. ()
-  => Rule (IntBindT m) () -> IBRWST m ()
-addSpecializedRuleT = undefined
+-- | This adds a new rule with a new historical identifier to the map
+addSpecializedRuleT :: forall m e. (IBM' e m)
+  => RuleID -> Rule (IntBindT m) () -> IBRWST m ()
+addSpecializedRuleT initial = runRule (RuleHistory initial [])
+
+-- | This will execute a rule and then add the rule to the graph as needed.
+--   Performs all the additionall bookkeeping.
+runRule :: forall m e. (IBM' e m)
+  => RuleHistory -> Rule (IntBindT m) () -> IBRWST m ()
+runRule = undefined
+
+-- | Runs a rule up to the point where it performs some manipulation of the
+--   term graph, whether that is a read or a write operation.
+execRule :: forall m e. (IBM' e m)
+  => Rule (IntBindT m) () -> IBRWST m [Rule (IntBindT m) ()]
+execRule = undefined
+
 forwardRuleT :: RuleID -> RuleID -> IBRWST m RuleID
 forwardRuleT old new = undefined
+
+-- | This will go on forever if your rules don rules don't settle down
+cleanTerm :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m ()
+cleanTerm t = (view $ toConfig @m) >>= \case
+  Nothing -> panic "invalid config"
+  Just c  -> go 0 t (c ^. maxCyclicUnifications)
+
+  where
+
+    go :: Int -> TermID t -> Int -> IBRWST m ()
+    go n t maxi = do
+      when (n > maxi) $ panic "Cycle didn't quiesce in time"
+      t' <- getRepresentative t
+      if (t /= t')
+        then (withAssumption (assumeClean @t @e t) $ cleanTerm t') *> markClean t
+        else whenM (isDirty t') $ do
+          _ <- withAssumption (assumeClean @t @e t') $ do
+            -- We mark the term as clean here, so that any changes to the term
+            -- will dirty it. Keep in mind that marking a term as dirty or clean
+            -- does not pay ant attention to assumptions
+            markClean t'
+            cleanDependencies t'
+            applySubsumptions t'
+            runRuleDependencies t'
+          go (n + 1) t' maxi
 
 -- | Applies a forwarded term to the rule history map, and prunes the rule list
 --   as needed.
@@ -333,6 +425,7 @@ forwardRelations = undefined
 
 getSubsumedTerms :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (HashSet (TermID t))
 getSubsumedTerms = undefined
+
 
 -- | Just sets the term value, doesn't do any bookkeeping
 setTermValue :: forall t m e. (IBTM' e t m)
@@ -370,30 +463,6 @@ applyDefaultRules = undefined
 addToDepGraph :: InternalID -> IBRWST m ()
 addToDepGraph = undefined
 
--- | This will go on forever if your rules don rules don't settle down
-cleanTerm :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m ()
-cleanTerm t = (view $ toConfig @m) >>= \case
-  Nothing -> panic "invalid config"
-  Just c  -> go 0 t (c ^. maxCyclicUnifications)
-
-  where
-
-    go :: Int -> TermID t -> Int -> IBRWST m ()
-    go n t maxi = do
-      when (n > maxi) $ panic "Cycle didn't quiesce in time"
-      t' <- getRepresentative t
-      if (t /= t')
-        then (withAssumption (assumeClean @t @e t) $ cleanTerm t') *> markClean t
-        else whenM (isDirty t') $ do
-          _ <- withAssumption (assumeClean @t @e t') $ do
-            -- We mark the term as clean here, so that any changes to the term
-            -- will dirty it. Keep in mind that marking a term as dirty or clean
-            -- does not pay ant attention to assumptions
-            markClean t'
-            cleanDependencies t'
-            applySubsumptions t'
-            runRuleDependencies t'
-          go (n + 1) t' maxi
 
 isDirty :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m Bool
 isDirty (typedTID @t @e -> t)
@@ -407,23 +476,27 @@ isAssumedClean t = do
   when result $ tell cleanAssumption
   pure result
 
-withAssumption :: forall a m e. (IBM' e m) => Assumption -> IBRWST m a -> IBRWST m (a, Bool)
-withAssumption (buildAssuming -> added) act = do
-   ((),w) <- listen skip
-   local modifyAssumptions $ do
-     (a,w') <- censor (const w) $ listen act
-     tell $ assumingIntersection w w'
-     pure (a, assumingIntersects w' added)
+-- | Runs the child computation with some assumption held as true.
+withAssumption :: forall a m e. (IBM' e m) => Assumption -> IBRWST m a -> IBRWST m a
+withAssumption (buildAssuming -> added) act =
+   local modifyAssumptions act
+
 
   where
 
     modifyAssumptions b@Context{..} = b{_assumptions=_assumptions <> added}
 
-withAssumption_ :: forall a m e. (IBM' e m)
-   => Assumption -> IBRWST m a -> IBRWST m a
-withAssumption_ added act = do
-  (a,_) <- withAssumption @a added act
-  pure a
+
+-- | is the second element in the subsumtion set of the first
+inSubsumeSet :: forall t m e. (IBTM' e t m)
+  => TermID t -> TermID t -> IBRWST m Bool
+inSubsumeSet = undefined
+
+-- | add the second element to the subsume set of the first. Also adds
+--   a dependency to the graph.
+addToSubsumeSet :: forall t m e. (IBTM' e t m)
+  => TermID t -> TermID t -> IBRWST m (TermID t)
+addToSubsumeSet = undefined
 
 getDependencies :: forall t m e. () => TermID t -> IBRWST m (HashSet InternalID)
 getDependencies = undefined
@@ -460,14 +533,28 @@ isAssumedSubsumed = undefined
 isAssumedUnified :: forall t m e. (IBTM' e t m) => TermID t -> TermID t -> IBRWST m Bool
 isAssumedUnified = undefined
 
+getPropMap :: forall t m e. (IBTM' e t m) => TermID t -> IBRWST m (TypeMap PropMap)
+getPropMap = undefined
+
+addProp :: forall p t t' m e. (Property p t t', IBTM' e t m, IBTM' e t' m)
+  => p -> TermID t -> TermID t' -> IBRWST m ()
+addProp = undefined
+
+addToDefaultRules :: forall t m e. (IBTM' e t m)
+  => RuleID -> (TermID t -> Rule (IntBindT m) ()) -> IBRWST m ()
+addToDefaultRules = undefined
+
+getAllTerms :: forall t m e. (IBTM' e t m)
+  => IBRWST m [TermID t]
+getAllTerms = undefined
+
 type VarIB t m = Var t (IntBindT m)
 
-
-{-
-instance (IBTM e t m) => MonadBind t (IntBindT m) where
+instance (IBTM' e t m) => MonadBind t (IntBindT m) where
 
   type Var t = VarID t
 
+{-
   freeVar :: IntBindT m (VarIB t m)
   freeVar = IntBindT $ unpackVID @(IntBindT m) <$> freeVarT
 
