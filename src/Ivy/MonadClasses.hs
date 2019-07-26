@@ -306,7 +306,6 @@ defaultUnify a b = recBinOp context (These a b)
         unifyProp p (This a') = (unify a' =<< (p  `propertyOf` b)) *> skip
         unifyProp _ _ = skip
 
-
 -- | Subsumes the first term to the second, returns the second.
 defaultSubsume :: forall e t r m. ( MonadRule e r m
                           , MonadBind e t m

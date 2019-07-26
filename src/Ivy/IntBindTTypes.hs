@@ -20,7 +20,7 @@ import Ivy.Prelude hiding (IntSet, IntMap)
 import Algebra.Lattice
 import Ivy.MonadClasses
 
-import Data.TypeMap.Dynamic (TypeMap, Item)
+import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
 import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -35,3 +35,53 @@ import qualified Control.Monad.Fail (fail)
 import Control.Monad (ap)
 import Data.IORef
 import Control.Concurrent.Supply
+
+newtype TermID t = TermID { getTermID :: Int }
+
+newtype VarID m t = VarID { getVarID :: Int }
+
+data Context = Context
+  { _configData  :: Config
+  , _assumptions :: Assumptions
+  }
+
+data Config = Config
+  {
+  }
+
+data Assumptions = Assumptions
+  {
+  }
+
+data TermSt
+
+type TermMap = ()
+
+type PropMap = ()
+
+type RuleMap = ()
+
+type RuleID = ()
+
+type IntID = ()
+
+data BindingState = BindingState
+  { _termMap :: TermMap
+  , _ruleMap :: RuleMap
+  , _dependencies :: AdjacencyMap RuleState
+  }
+
+data TermState t
+  = Forwarded { _target :: TermID t }
+  | Bound { _boundState :: BoundState t }
+
+data RuleState where
+  Merged :: RuleID -> RuleState
+  Watching :: forall m r. TypeRep m -> m [r ()] -> RuleState
+  Updating :: forall m t. TypeRep m -> m (t (VarID m t)) -> RuleState
+
+data BoundState t = BoundState
+  { _termValue :: Maybe (t (TermID t))
+  , _subsumed :: HashSet (TermID t)
+  , _properties :: PropMap
+  }
