@@ -37,7 +37,6 @@ class (Eq l) => POrd l where
 class (Functor l) => POrd1 l where
 
   liftLessThanOrEq    :: (Monad m)
-                      -- | Leq for the parameter type @p@.
                       => (p -> p -> m Bool)
                       -> l p -> l p -> m Bool
   liftLessThan        :: (Monad m)
@@ -89,12 +88,7 @@ class JoinSemiLattice1 e l where
   --
   --   NOTE :: We force you to use the join operation non-commutatively
   --          because we might need to handle each input differently.
-  liftLatJoin   :: (Monad m)
-                -- | The join operation we are lifting into 'l'
-                => (a -> m c)
-                -> (b -> m c)
-                -> (a -> b -> m c)
-                -> l a -> l b -> m (Either e (l c))
+  liftLatJoin :: l a -> l b -> Either e (l (These a b))
 
 
 class MeetSemiLattice1 l where
@@ -105,7 +99,6 @@ class MeetSemiLattice1 l where
   --   We trust the user to check when an outcome is a
   --   representation of bottom and correctly return `Nothing`.
   liftLatMeet   :: (Monad m)
-                -- | the meet operation we are lifting into `l`
                 => (p -> p -> m (Maybe p))
                 -> l p -> l p -> m (Maybe (l p))
 

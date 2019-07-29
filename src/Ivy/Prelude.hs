@@ -15,9 +15,14 @@ module Ivy.Prelude (
   , censor
   , maybeM
   , liftEither
+  , whenJust
+  , matchType
+  , matchType2
+  , mappendMaybe
+  , mappendMaybes
 ) where
 
-import Intro as P
+import Intro as P hiding (Item)
 import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)
@@ -30,9 +35,15 @@ import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
 import Control.Newtype as P
-import GHC.Exts as P (fromListN)
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
+import Control.Lens as P hiding (para, under, over, op, ala, Context)
+import Data.These as P hiding (swap)
+
+
+whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
+whenJust Nothing _ = skip
+whenJust (Just a) f = f a
 
 liftEither :: MonadError e m => Either e a -> m a
 liftEither = either throwError pure
@@ -60,6 +71,11 @@ censor f m = pass $ do
     a <- m
     pure (a, f)
 
+mappendMaybes :: (Monoid p) => [Maybe p] -> Maybe p
+mappendMaybes = foldr mappendMaybe (Just mempty)
+
+mappendMaybe :: (Semigroup p) => Maybe p -> Maybe p -> Maybe p
+mappendMaybe a b = (<>) <$> a <*> b
 
 -- | Generalization of `Maybe` to monads
 maybeM :: (Monad m) => m a -> m (Maybe a) -> m a
@@ -67,7 +83,22 @@ maybeM d m = m >>= \case
   Just a -> pure a
   Nothing -> d
 
+-- | perform some action if types don't match
+matchType :: forall t t' a. (Typeable t)
+           => TypeRep t' -> a -> (t :~~: t' -> a) -> a
+matchType tr err succ = fromMaybe err $ do
+  h <- eqTypeRep (typeRep @t) tr
+  pure $ succ h
 
+-- | Matches a pair of types instead of just one.
+matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
+           => TypeRep t' -> a
+           -> TypeRep m' -> a
+           -> (t :~~: t' -> m :~~: m' -> a)
+           -> a
+matchType2 tt errt tm errm succ =
+  matchType @t tt errt
+    (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
 {-
 import Data.Functor as B
 

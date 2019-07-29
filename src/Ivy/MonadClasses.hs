@@ -1,5 +1,6 @@
 {-# OPTIONS_GHC -fno-warn-missing-methods #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-|
 Module      : Ivy.Scratchpad
 Description : Random scratch work goes here until it's moved
@@ -15,6 +16,10 @@ module Ivy.MonadClasses where
 import Ivy.Prelude
 import Algebra.Lattice
 import qualified Data.Text as Text
+import Data.HashSet (HashSet)
+import qualified Data.HashSet as HS
+
+import Data.Monoid (All, getAll)
 
 -- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It
@@ -41,356 +46,312 @@ import qualified Data.Text as Text
 --            I suspect it would be faster to build, but not as simple
 --            to manipulate.
 
--- | Constraints that terms should meet
-type Term e t = (Typeable t, JoinSemiLattice1 e t, Traversable t, Eq1 t
-                , Show1 t)
 
--- | Constraints that an int binding monad must meet.
-type IBM e m = (MonadError e m, BindingError e, Typeable m, Typeable e)
+-- | A context that is an instance of MonadBind can create variables that
+--   represent single terms in a recursive expression, as well as rebind them
+--   to new values, and declare that one variable should be redirected into
+--   another.
+class ( Typeable t
+      , Traversable t
+      , Monad m
+      , Hashable (Var m t)
+      , Eq (Var m t)
+      , MonadError e m)
+    => MonadBind (e :: Type) t m | m -> e where
 
-type IBTM e t m = (Term e t, IBM e m, Show (Var t m), Typeable (Var t), Eq (Var t m))
+  type Var m :: (Type -> Type) -> Type
 
--- | This monad gives you the ability to unify terms in some unifiable language.
-class MonadBind t m => MonadUnify t m  where
+  -- | Create a free variable with no term bound to it
+  freeVar :: m (Var m t)
 
-  -- | This allows you to unify terms in your given context.
-  unify :: (Term e t, IBM e m) => Var t m -> Var t m -> m (Var t m)
+  -- | lookup the term for a variable, returns Nothing if the variable is free.
+  lookupVar :: Var m t -> m (Maybe (t (Var m t)))
 
-  -- | Tells us whether two terms have been unified. Does not change
-  --   the state of the update, just return information.
-  -- equals :: (Term e t, IBM e m) => Var t m -> Var t m -> m Bool
+  -- | Binds the given term to a variable.
+  bindVar   :: Var m t -> t (Var m t) -> m (Var m t)
 
-  -- TODO :: I'm not confident that we want an equiv operation since
-  --        that may break the upwards closed nature of our various operations
-  --        It's kinda unclear.
+  -- | Deletes the contents of the first variable, and makes all references to
+  --   it instead point to second variable.
+  redirectVar :: Var m t -> Var m t -> m (Var m t)
+
+-- | Properties are singleton types which reference some functional relation
+--   between terms.
+class Property p t t' | p -> t, p -> t'
+
+class (Typeable p) => MonadProperty e p m where
+
+  -- | This will get the property related to the input term, generating a
+  --   free term if it does not already exist.
   --
-  --   Hell it isn't even clear that the core binding operations need
-  --   to be upwards closed in some fashion.
+  --   Properties are many-to-one relationships between terms. For instance
+  --   many terms can have the same type, but no term can have multiple
+  --   types.
+  propertyOf :: (MonadBind e t m, MonadBind e t' m, Property p t t')
+      => p -> Var m t -> m (Var m t')
+
+
+class (MonadBind e t m) => MonadUnify e t m where
+
+  -- | Check whether two terms are equal. i.e That they could be unified without
+  --   an error.
   --
-  --   Tells us whether the input terms are equivalent modulo renaming of
-  --   free variables. If they are, returns a set of unifications that
-  --   need to occur for both terms to be truly equivalent.
-  --   equiv :: Var m t -> Var m t -> m (Maybe [(Var m t, Var m t)])
+  --   NOTE :: This should be aware of assumptions
+  equals :: Var m t -> Var m t -> m Bool
 
--- | A property is a many-to-one relationship between two terms of potentially
---   different types.
-class (Eq p, Ord p, Hashable p, Typeable p)
-   => Property p (t :: Type -> Type) (t' :: Type -> Type) | p -> t, p -> t'
-
--- | A binding monad that can support property relations between terms.
---
---   NOTE: A very important note is that when you unify two terms with the same
---         property then the terms those properties point to will also be
---         unified!
---
---   NOTE: Properties are expected to be phantom types with no instances.
---         maybe that'll change later but for now they're singletons.
-
-class (Property p t t', MonadBind t m, MonadBind t' m)
-   => MonadProperty p t t' m where
-
-  -- | Retrieve the term re
-  propertyOf :: Var t m -> m (Var t' m)
-
-
-
-{-
--- | Lets you define how unification works for some specific type of term.
---
---   Ideally this would either be some JoinSemiLattice or the fixed point of a
---   higher-order join semilattice.
---   Those instances will be coming I suppose.
-class Unifiable e t where
-
-   -- | TODO :: see if we can better integrate with the partial order model
-   --           that we're using elsewhere.
-   --
-   --           in particular unifiable e t should be structurally equivalent to
-   --           JoinSem iLattice1 e t.
-   unifyTerm :: (MonadError e m, MonadUnify t m) => t v -> t v -> m (t v)
--}
-
--- | Monads that allow you to bind variables to terms.
-class (Show (t (Var t m))) => MonadBind t m where
-
-  -- | This is a variable that has a unifiable term associated with it.
-  type Var t = (r :: (Type -> Type) -> Type) | r -> t
-
-  -- | Create a new free (unbound) variable. The proxy term is a bit annoying
-  --   but at least it helps ensure that everything is properly typed without
-  --   requiring a whole pile of extra effort.
-  freeVar :: (IBTM e t m) => m (Var t m)
-
-  -- | Get the single layer term for some variable or `Nothing` if
-  --   the var is unbound.
-  lookupVar  :: (IBTM e t m) => Var t m -> m (Maybe (t (Var t m)))
-
-  -- | Binds a variable to some term, overwriting any existing term for that
-  --   variable if needed.
-  bindVar :: (IBTM e t m) => Var t m -> t (Var t m) -> m (Var t m)
-
-class (MonadBind t m, MonadUnify t m) => MonadSubsume t m where
-
-  -- | Asserts that the first var subsumes the second.
-  subsume :: Var t m -> Var t m -> m ()
-
-  -- | Asks whether the first variable is <= the second
-  -- subsumes :: Var t m -> Var t m -> m Bool
-
-
--- | A class for monads that can attempt a computation and if that computation
---  fails rewind state and run some recovery operation
-class (Monad m) => MonadAttempt m where
-
-  -- | Try an update, if the action should be rolled back (returns a `Left f`)
-  --   then do so, and run the recovery function.
+  -- | Unify two terms and return the variable for the result. Once run
+  --   both inputs and the return value are all functionally identical.
   --
-  --   Keep in mind that the f here isn't actually an error per-se, just
-  --   some knowledge that has been gained from the rolled back computation.
-  --   E.g. if you're doing CDCL `f` could be a newly learned conflict clause.
+  --   NOTE :: This also unifies the properties of both variables.
+  unify :: Var m t -> Var m t -> m (Var m t)
+
+  -- | Ensure that the first term subsumes the second.
   --
-  --   NOTE: We're not using something like LogicT because this interface works
-  --         better with the push-pop interface of incremental SMT solving.
-  attempt :: m (Either f b) -> (f -> m b) -> m b
+  --   NOTE :: This does not ensure that the properties all also subsume each
+  --           other. There is no need, since the inputs stay separate.
+  subsume :: Var m t -> Var m t -> m (Var m t)
 
 
--- | The default implementation of Attempt for a monad transformer on top of
---   a MonadAttempt.
+-- | This class is only relevant to implementers of a MonadProperty.
+--   Basically, it gives us a way to traverse each of the potential
+--   property pairs for some term, and appropriately handle them.
+class MonadProperties e m where
+
+  getPropertyPairs :: forall a t. (MonadBind e t m)
+      => (forall t' p . ( MonadProperty e p m
+                        , Property p t t'
+                        , JoinSemiLattice1 e t'
+                        , MonadAssume e t' m)
+                      => p -> These (Var m t') (Var m t') -> m a)
+      -> (m a -> m a -> m a)
+      -> a
+      -> Var m t -> Var m t -> m a
+
+-- | This class is mostly only relevant to implementers of a MonadBind.
+--   In effect we refactor the visited sets as assumptions that are held
+--   during some part of the computation.
 --
---   You need to provide the instructions on how to compose and decompose
---   the state for that monad transformer.
+--   This basically makes it easier to handle coinductive reasoning about
+--   equality, unity, and subsumption.
+class (MonadUnify e t m) => MonadAssume e t m where
+
+  -- | Are the two terms equal
+  isAssumedEqual :: Var m t -> Var m t -> m Bool
+
+  -- | Within the passed action assume the two variables are equivalent.
+  assumeEqual :: Var m t -> Var m t -> m a -> m a
+
+  -- | Variable equality that is aware of assumptions
+  isAssumedUnified :: Var m t -> Var m t -> m Bool
+
+  -- | Within the passed action assume the two variables are unified.
+  assumeUnified :: Var m t -> Var m t -> m a -> m a
+
+  -- | Single layer term subsumption, that is aware of assumptions
+  isAssumedSubsumed :: Var m t -> Var m t -> m Bool
+
+  -- | Within the passed action assume that the first variable subsumes the
+  --   second. .
+  assumeSubsumed :: Var m t -> Var m t -> m a -> m a
+
+-- | Rules allow for the enforcement of relationships between terms as an
+--   operation is performed.
+class ( forall t. (MonadBind e t m) => MonadBind e t r
+      , forall t. (MonadUnify e t m) => MonadUnify e t r
+      , forall t. (MonadAssume e t m) => MonadAssume e t r
+      , forall p. (MonadProperty e p m) => MonadProperty e p r
+      , MonadRule e r r
+      , Var m ~ Var r
+      ) => MonadRule e r m | m -> e, m -> r, r -> e where
+
+  addRule :: r a -> m ()
+
+
+data BinOpContext a b e t m = BinOpContext
+  { check :: These (Var m t) (Var m t) -> m (Maybe a)
+  , assume :: These (Var m t) (Var m t) -> m (Maybe b) -> m (Maybe b)
+  , handle :: e -> m b
+  , traversing :: forall c. (c -> m a) -> t c -> m b
+  , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
+  }
+
+recBinOpF :: forall a b e t m. (MonadBind e t m, JoinSemiLattice1 e t)
+         => BinOpContext a b e t m
+         -> (These (Var m t) (Var m t) -> m a)
+         -> These (Var m t) (Var m t)
+         -> m a
+recBinOpF BinOpContext{..} = \ recurse inputs ->
+  flip maybeM (check inputs) $ do
+    subterm :: Maybe b <- assume inputs $
+        bitraverseThese (lookupVar @e) (lookupVar @e) inputs >>= \case
+        --
+        This Nothing   -> nothingCase
+        This (Just ta) -> thisCase recurse ta
+        --
+        That Nothing   -> nothingCase
+        That (Just tb) -> thatCase recurse tb
+        --
+        These Nothing   Nothing   -> nothingCase
+        These (Just ta) Nothing   -> thisCase recurse ta
+        These Nothing   (Just tb) -> thatCase recurse tb
+        These (Just ta) (Just tb) -> theseCase recurse ta tb
+    merge inputs subterm
+
+  where
+
+
+    nothingCase = pure Nothing
+
+    thisCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
+    thisCase f ta = Just <$> (traversing f $ map This ta)
+
+
+    thatCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
+    thatCase f tb = Just <$> (traversing f $ map That tb)
+
+    theseCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> t (Var m t) -> m (Maybe b)
+    theseCase f ta tb = Just <$> case liftLatJoin ta tb of
+      Left e -> handle e
+      Right tu -> traversing f tu
+
+recBinOp :: forall a b e t m. (MonadBind e t m, JoinSemiLattice1 e t)
+         => BinOpContext a b e t m
+         -> These (Var m t) (Var m t)
+         -> m a
+recBinOp c = fix (recBinOpF c)
+
+type OpSet m = HashSet (TVar m, TVar m)
+
+data TVar m where
+  TVar :: (MonadBind e t m) => TypeRep t -> Var m t -> TVar m
+
+instance Hashable (TVar m) where
+  hashWithSalt s (TVar _ v) = hashWithSalt s v
+
+instance Eq (TVar m) where
+  (TVar t v) == (TVar t' v') = fromMaybe False $ do
+    HRefl <- eqTypeRep t t'
+    pure (v == v')
+
+-- | Returns nothing if the terms aren't equal, otherwise it returns a list
+--   of terms that should be unified to unify the input terms.
+defaultEquals :: forall e t m. (MonadAssume e t m, MonadProperties e m, JoinSemiLattice1 e t)
+   => Var m t -> Var m t -> m Bool
+defaultEquals a b = recBinOp context (These a b)
+
+  where
+
+    context :: BinOpContext Bool Bool e t m
+    context = BinOpContext{..}
+
+    traversing :: forall c. (c -> m Bool) -> t c -> m Bool
+    traversing f t = allM f $ (foldMap (:[]) t :: [c])
+
+    check (These a b) = ifM undefined -- (a `equals` b)
+      (pure . Just $ True) (pure Nothing)
+    check _ = pure . Just $ True
+
+    assume (These a b) = assumeEqual a b
+    assume _ = id
+
+    handle _ = pure $ False
+
+    merge (This _) eq = pure $ fromMaybe True eq
+    merge (That _) eq = pure $ fromMaybe True eq
+    merge (These a b) eq = (pure $ fromMaybe True eq) &&^ equalsProps a b
+
+    equalsProps :: Var m t -> Var m t -> m Bool
+    equalsProps a b = helper a b
+
+    helper a b = getPropertyPairs @e getEq (&&^) True a b
+      where
+        getEq :: forall p t'. (JoinSemiLattice1 e t', MonadAssume e t' m)
+                 => p -> These (Var m t') (Var m t') -> m Bool
+        getEq _ (These a b) = equals a b
+        getEq _ _ = pure True
+
+-- | unifies two terms as needed
+defaultUnify :: forall e t m. (MonadAssume e t m, MonadProperties e m, JoinSemiLattice1 e t)
+   => Var m t -> Var m t -> m (Var m t)
+defaultUnify a b = recBinOp context (These a b)
+
+  where
+
+    context :: BinOpContext (Var m t) (t (Var m t)) e t m
+    context = BinOpContext{..}
+
+    check (This a) = pure $ Just a
+    check (That b) = pure $ Just b
+    check (These a b) = ifM undefined -- (a `isUnifiedWith` b)
+       (pure . Just $ b) (pure Nothing)
+
+
+    assume (These a b) = assumeUnified a b
+    assume _ = id
+
+    handle = throwError
+
+    traversing = traverse
+
+    merge (These a b) mTerm = do
+      unifyProps a b
+      b' <- maybe (pure b) (bindVar b) mTerm
+      redirectVar a b'
+    merge _ _ = panic "unreachable"
+
+    unifyProps :: Var m t -> Var m t -> m ()
+    unifyProps a b = getPropertyPairs unifyProp (*>) mempty a b
+      where
+        unifyProp :: forall p t'. (MonadProperty e p m
+                                 , Property p t t'
+                                 , JoinSemiLattice1 e t'
+                                 , MonadAssume e t' m)
+                 => p -> These (Var m t') (Var m t') -> m ()
+        unifyProp _ (These a' b') = unify @e @t' @m a' b' *> skip
+        unifyProp p (This a') = (unify a' =<< (p  `propertyOf` b)) *> skip
+        unifyProp _ _ = skip
+
+-- | Subsumes the first term to the second, returns the second.
 --
---   If an error is thrown during the attempted action then we revert the
---   action, but allow the error to continue propagating. This seems like
---   the least bad way to handle the problem. The bindings that triggered
---   the error may well be missing due to rolling things back, but at least
---   you're in a coherent state of some sort that you might be able to
---   recover from.
---
---   NOTE :: If you disagree with the above, I'd be happy to listen to why.
-defaultErrorLiftAttempt :: forall t m f b e. (MonadTransControl t,
-                                      MonadAttempt m,
-                                      Monad (t m),
-                                      MonadError e (t m)
-                                     )
-                   => (forall a. StT t a -> (StT t (), a))
-                   -> (forall a. (StT t (), a) -> StT t a)
-                   -> t m (Either f b)
-                   -> (f -> t m b)
-                   -> t m b
-defaultErrorLiftAttempt extractState insertState act recover = do
-  initState <- captureT
-  result <- liftWith $ \ run ->
-    attempt (act' run) $ recover' run initState
-  restoreT $ pure result
-    where
+--   FIXME :: This has a subtle error because we don't actually keep a visible
+--           mapping from subsumed to subsumer. It'll end up duplicating terms
+--           from the subsumer if they're referenced multiple times.
+defaultSubsume :: forall e t r m. ( MonadRule e r m
+                          , MonadBind e t m
+                          , MonadBind e t r
+                          , MonadAssume e t r
+                          , JoinSemiLattice1 e t
+                          , Var r ~ Var m)
+        => Var r t -> Var r t -> m (Var r t)
+defaultSubsume a b = (addRule $ performSubsume a b) *> pure b
 
-      -- | We wrap our action in a catchError block so that we can well,
-      --   catch the errors.
-      wAct :: t m (Either (Either e f) b)
-      wAct = catchError (first Right <$> act) (pure . Left . Left)
+  where
 
+    performSubsume :: Var r t -> Var r t -> r (Var r t)
+    performSubsume a b = recBinOp context (These a b)
 
-      act' :: Run t -> m (Either (Either e f) (StT t b))
-      act' run = extractState <$> (run @_  @(Either (Either e f) b) wAct) >>= pure . \case
-        (st, Right b) -> Right $ insertState (st, b :: b)
-        (_ , Left  f) -> Left  f
+    context :: BinOpContext (Var r t) (t (Var r t)) e t r
+    context = BinOpContext{..}
 
-      recover' :: Run t -> StT t () -> Either e f -> m (StT t b)
-      recover' run initSt f
-        = run $ restoreT (pure initSt) >>= (\ () -> case f of
-            (Left e) -> throwError e
-            (Right f') -> recover f')
+    check :: These (Var r t) (Var r t) -> r (Maybe (Var r t))
+    check (This a) = Just <$> (subsume a =<< freeVar)
+    check (That b) = pure $ Just b
+    -- Even if a does already subsume b we still need to run the recursive
+    -- pass of the rule, since it will update the subsumed term anyway
+    -- The only other case occours when two terms subsume each other and
+    -- need to be unified.
+    check (These a b) = ifM undefined --(b `isSubsuming` a)
+                            (Just <$> unify a b)
+                            (pure Nothing)
 
--- | Lift an attempt through a type without handling errors. Should pretty
---   much only be used on an ExceptT.
-defaultLiftAttempt :: forall t m f b. (MonadTransControl t,
-                                      MonadAttempt m,
-                                      Monad (t m)
-                                     )
-                   => (forall a. StT t a -> (StT t (), a))
-                   -> (forall a. (StT t (), a) -> StT t a)
-                   -> t m (Either f b)
-                   -> (f -> t m b)
-                   -> t m b
-defaultLiftAttempt extractState insertState act recover = do
-  initState <- captureT
-  result <- liftWith $ \ run ->
-    attempt (act' run) $ recover' run initState
-  restoreT $ pure result
-    where
+    assume :: forall c. These (Var r t) (Var r t) -> r c -> r c
+    assume (These a b) = assumeSubsumed a b
+    assume _ = id
 
+    handle :: forall c. e -> r c
+    handle = throwError
 
-      act' :: Run t -> m (Either f (StT t b))
-      act' run = extractState <$> (run @_ @(Either f b) act) >>= pure . \case
-        (st, Right b) -> Right $ insertState (st, b :: b)
-        (_ , Left  f) -> Left  f
+    traversing = traverse
 
-      recover' :: Run t -> StT t () -> f -> m (StT t b)
-      recover' run initSt f = run $ do
-        () <- restoreT (pure initSt)
-        recover f
-
-
--- | A context for an error modifies an error to add additional metadata.
-type ErrorContext e = e -> e
-
--- | Errors that are internal to our current library and are not due to
---   user error.
-class BindingError e where
-
-  -- | Error thrown when our backend expects a term to be of some type, and it
-  --   isn't.
-  invalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> e
-
-  -- | Error when we try to look up a term that doesn't exist anymore
-  nonexistentTerm       :: (IBTM e t m) => Var t m -> e
-
-  -- | Error when a term we expect to be a set representative isn't
-  expectedBoundState    :: (IBTM e t m) => Var t m -> e
-
-  -- | A pair of terms that we expect to be unified isn't.
-  termsNotUnified      :: (IBTM e t m, Show (t (Var t m)))
-                       => t (Var t m)
-                       -> t (Var t m)
-                       -> e
-
-  invalidTermUpdate :: (IBTM e t m, Show (t (Var t m))) => Text -> e
-
-  -- | Context where we're getting the Term State of a Var.
-  gettingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
-
-  -- | Context where we're setting that state.
-  settingTermStateOf   :: (IBTM e t m) => Var t m -> ErrorContext e
-
-  -- | Context where we're looking up the representative of a term
-  gettingRepresentativeOf :: (IBTM e t m) => Var t m -> ErrorContext e
-
-  -- | Context where we're looking a term up
-  lookingUp :: (IBTM e t m) => Var t m -> ErrorContext e
-
-  -- | Context where we're attempting to unify terms
-  unifyingTerms :: (IBTM e t m) => Var t m -> Var t m -> ErrorContext e
-
-  -- | Context where we're subsuming terms
-  subsumingTerms :: (IBTM e t m) => Var t m -> Var t m -> ErrorContext e
-
-  gettingPropertyOf :: (IBTM e t m, Property p t t')
-    => Var t m -> TypeRep p -> ErrorContext e
-
-addErrorCtxt :: Text -> Text -> Text
-addErrorCtxt ctxt = Text.unlines . (ctxt :) . map (Text.append "  ") . Text.lines
-
-showVar :: (Show (Var t m), Typeable (Var t), Typeable m) => Var t m -> Text
-showVar v =  show v <> " :: " <> show (typeOf v)
-
-instance BindingError Text where
-  invalidTypeFound      :: (Typeable a, Typeable b) => TypeRep a -> TypeRep b -> Text
-  invalidTypeFound a b = "Expecting type `" <> show b <> "` but instead found `" <> show a <> "`."
-
-  nonexistentTerm       :: forall t m. (IBTM Text t m) => Var t m -> Text
-  nonexistentTerm v = "Could not find term `" <> showVar v <> "`."
-
-  termsNotUnified a b = "Terms should be unified `" <> show a <> "`, and `" <> show b <> "`."
-
-  invalidTermUpdate t = "Term update failed because:" <> t
-
-  gettingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  gettingTermStateOf v = addErrorCtxt $ "While getting TermState of `" <> showVar v <> "`:"
-
-  settingTermStateOf   :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  settingTermStateOf v = addErrorCtxt $ "While setting TermState of `" <> showVar v <> "`:"
-
-  gettingRepresentativeOf :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  gettingRepresentativeOf v
-    = addErrorCtxt $ "While getting representative of `" <> showVar v <> "`:"
-
-  lookingUp :: forall t m. (IBTM Text t m) => Var t m -> ErrorContext Text
-  lookingUp v = addErrorCtxt $ "While looking up `" <> showVar v <> "`:"
-
-  unifyingTerms a b = addErrorCtxt $ "While unifying `" <> showVar a
-    <> "`, and `" <> showVar b <> "`:"
-
-  subsumingTerms a b = addErrorCtxt $ "While subsuming term `" <> showVar a
-    <> "`, and `" <> showVar b <> "`: "
-  expectedBoundState :: forall t m. (IBTM Text t m) => Var t m -> Text
-  expectedBoundState v = "Expected a BoundState when looking up `" <>showVar v <> "`."
-
-  gettingPropertyOf v p = addErrorCtxt $ "While getting property `" <> show p
-    <> "` of `" <> show v <> "`."
-
-
-throwInvalidTypeFound :: (Typeable a, Typeable b, MonadError e m, BindingError e)
-                      => TypeRep a -> TypeRep b -> m c
-throwInvalidTypeFound a b = throwError $ invalidTypeFound a b
-
-type ThrowBindErr e t m m'
-  = ( Term e t
-  , MonadError e m'
-  , Show (Var t m')
-  , Show (t (Var t m'))
-  , Eq (Var t m')
-  , Typeable (Var t)
-  , Typeable m'
-  , Typeable e
-  , MonadError e m
-  , BindingError e
-  )
-
-data VoidT a
-
-instance Show1 VoidT
-instance Eq1 VoidT
-instance JoinSemiLattice1 e VoidT
-instance Functor VoidT
-instance Foldable VoidT
-instance Traversable VoidT
-instance Show (VoidT a)
-
-throwNonexistentTerm :: (ThrowBindErr e t m m') => Var t m' -> m c
-throwNonexistentTerm = throwError . nonexistentTerm
-
-throwExpectedBoundState :: (ThrowBindErr e t m m') => Var t m' -> m c
-throwExpectedBoundState = throwError . expectedBoundState
-
-throwTermsNotUnified :: (ThrowBindErr e t m m')
-                     => t (Var t m')
-                     -> t (Var t m')
-                     -> m c
-throwTermsNotUnified ta tb = throwError $ termsNotUnified ta tb
-
-throwInvalidTermUpdate :: forall e m c. (BindingError e
-                                       , MonadError e m
-                                       , Typeable (Var VoidT)
-                                       , Typeable m
-                                       , Typeable e
-                                       , Eq (Var VoidT m)
-                                       , Show (Var VoidT m)
-                                       ) => Text -> m c
-throwInvalidTermUpdate e = throwError $ invalidTermUpdate @e @VoidT @m e
-
-withMonadError :: (MonadError e m) => (e -> e) -> m a -> m a
-withMonadError f v = catchError v (throwError . f)
-
-whileGettingTermStateOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
-whileGettingTermStateOf = withMonadError . gettingTermStateOf
-
-whileSettingTermStateOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
-whileSettingTermStateOf = withMonadError . settingTermStateOf
-
-whileGettingRepresentativeOf :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
-whileGettingRepresentativeOf = withMonadError . gettingRepresentativeOf
-
-whileLookingUp :: (ThrowBindErr e t m m') => Var t m' -> m a -> m a
-whileLookingUp = withMonadError . lookingUp
-
-whileUnifyingTerms :: (ThrowBindErr e t m m') => Var t m' -> Var t m' -> m a -> m a
-whileUnifyingTerms a b = withMonadError $ unifyingTerms a b
-
-whileSubsumingTerms :: (ThrowBindErr e t m m') => Var t m' -> Var t m' -> m a -> m a
-whileSubsumingTerms a b = withMonadError $ subsumingTerms a b
-
-whileGettingPropertyOf :: (ThrowBindErr e t m m'
-                         , Property p t t')
-                         => Var t m' -> TypeRep p -> m a -> m a
-whileGettingPropertyOf v p = withMonadError $ gettingPropertyOf v p
+    merge :: These (Var r t) (Var r t) -> Maybe (t (Var r t)) -> r (Var r t)
+    merge (These _ b) mTerm = maybe (pure b) (bindVar b) mTerm
+    merge _ _ = panic "unreachable"
