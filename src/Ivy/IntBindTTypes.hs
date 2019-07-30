@@ -39,6 +39,16 @@ import Data.IORef
 import Control.Concurrent.Supply
 
 
+type BSM = StateT BindingState
+
+type BSEC e = (Typeable e)
+type BSMC m = (Monad m)
+type BSTC t = (Traversable t, Typeable t, Eq1 t)
+type BSMTC m t = (BSMC m, BSTC t)
+type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
+type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
+type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
+
 newtype UnivID = UnivID { getUnivID :: Int }
   deriving newtype (Eq, Ord, Show, Hashable, NFData)
 
@@ -79,9 +89,36 @@ force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
 force = pack . unpack
 
 data ExID where
-  VID :: () => TypeRep m -> TypeRep t -> VarID m t -> ExID
+  TID :: (BSTC t) => TypeRep t -> TermID t -> ExID
   RID :: () => RuleID -> ExID
-  -- deriving (Eq, Ord, Show, Generic, Hashable, NFData)
+
+instance Eq ExID where
+  (RID r) == (RID r') = r == r'
+  (TID tr t) == (TID tr' t') = fromMaybe False $ do
+    HRefl <- eqTypeRep tr tr'
+    pure $ t == t'
+  _ == _ = False
+
+instance Ord ExID where
+  compare (RID _) (TID _ _) = LT
+  compare (TID _ _) (RID _) = GT
+  compare (RID r) (RID r')  = compare r r'
+  compare (TID _ t) (TID _ t') = compare (unpack t) (unpack t')
+
+instance Hashable ExID where
+  hashWithSalt s (RID r) = hashWithSalt s r
+  hashWithSalt s (TID _ t) = hashWithSalt s t
+
+
+class ToExID a where
+  toExID :: a -> ExID
+
+instance ToExID RuleID where
+  toExID = RID
+
+instance (BSTC t) => ToExID (TermID t) where
+  toExID = TID typeRep
+
 
 data Context = Context
   { _config  :: Config
@@ -122,8 +159,8 @@ instance Typeable t => At (TermMap t) where
     where
       getter :: TermMap t -> Maybe (TermState t)
       getter (TermMap x) = do
-        res <- TM.lookup (typeRep @(Term t)) x
-        HM.lookup tid res
+         res <- TM.lookup (typeRep @(Term t)) x
+         HM.lookup tid res
 
       fsetter :: Maybe (TermState t)
               -> TermMap t -> TermMap t
@@ -134,6 +171,16 @@ instance Typeable t => At (TermMap t) where
             Nothing ->
               TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mempty) x
 
+data DefaultRule (t :: Type -> Type) where
+  DefaultRule :: forall t e m r. (MonadRule e r m, MonadBind e t m)
+              => TypeRep e -> TypeRep m -> TypeRep r -> (Var m t -> m [r ()])
+              -> DefaultRule t
+
+data RMap
+type instance Item RMap (Term t) = DefaultRule t
+
+type RuleMap = TypeMap RMap
+
 data BindingState = BindingState
   { _supply        :: Supply
   , _idents        :: HashMap UnivID ExID
@@ -141,6 +188,7 @@ data BindingState = BindingState
   , _rules         :: HashMap RuleID RuleState
   , _dependencies  :: AdjacencyMap ExID
   , _ruleHistories :: HashMap RuleID RuleHistory
+  , _defaultRule   :: RuleMap
   }
 
 data TermState t where
@@ -148,8 +196,19 @@ data TermState t where
   Forwarded :: { _target :: TermID t } -> TermState t
   Bound :: { _boundState :: BoundState t } -> TermState t
 
+freeBoundState :: BoundState t
+freeBoundState = BoundState Nothing mempty TM.empty
 
-type PropMap = ()
+freeTermState :: TermState t
+freeTermState = Bound freeBoundState
+
+
+data PropRel where
+  PropRel :: forall p e t t'. (BSETC e t, BSETC e t', Property p t t')
+    => TypeRep e -> TypeRep p -> TypeRep t -> TypeRep t' -> TermID t' -> PropRel
+
+type PropMap = TypeMap (OfType PropRel)
+
 data BoundState t = BoundState
   { _termValue :: Maybe (t (TermID t))
   , _subsumed :: HashSet (TermID t)
@@ -195,8 +254,6 @@ data Rule m a where
   Fin :: Rule m a
 
 newtype AssumeT m a = AssumeT { getAssumeT :: ReaderT Assumptions m a }
-
-newtype IntBindT m a = BindT { getIntBindT :: StateT BindingState m a }
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config

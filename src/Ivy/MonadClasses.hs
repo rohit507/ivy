@@ -76,7 +76,7 @@ class ( Typeable t
 
 -- | Properties are singleton types which reference some functional relation
 --   between terms.
-class Property p t t' | p -> t, p -> t'
+class (Typeable p) => Property p t t' | p -> t, p -> t'
 
 class (Typeable p) => MonadProperty e p m where
 
@@ -117,12 +117,10 @@ class (MonadBind e t m) => MonadUnify e t m where
 class MonadProperties e m where
 
   getPropertyPairs :: forall a t. (MonadBind e t m)
-      => (forall t' p . ( MonadProperty e p m
-                        , Property p t t'
-                        , JoinSemiLattice1 e t'
-                        , MonadAssume e t' m)
-                      => p -> These (Var m t') (Var m t') -> m a)
-      -> (m a -> m a -> m a)
+      => (forall t' p proxy. ( MonadProperty e p m
+                        , Property p t t')
+                      => proxy p -> These (Var m t') (Var m t') -> m a)
+      -> (a -> a -> m a)
       -> a
       -> Var m t -> Var m t -> m a
 
@@ -174,6 +172,7 @@ data BinOpContext a b e t m = BinOpContext
   , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
   }
 
+{-
 recBinOpF :: forall a b e t m. (MonadBind e t m, JoinSemiLattice1 e t)
          => BinOpContext a b e t m
          -> (These (Var m t) (Var m t) -> m a)
@@ -355,3 +354,4 @@ defaultSubsume a b = (addRule $ performSubsume a b) *> pure b
     merge :: These (Var r t) (Var r t) -> Maybe (t (Var r t)) -> r (Var r t)
     merge (These _ b) mTerm = maybe (pure b) (bindVar b) mTerm
     merge _ _ = panic "unreachable"
+-}
