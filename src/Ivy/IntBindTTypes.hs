@@ -75,6 +75,9 @@ instance Newtype RuleID Int where
   pack = RuleID
   unpack = getRuleID
 
+force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
+force = pack . unpack
+
 data ExID where
   VID :: () => TypeRep m -> TypeRep t -> VarID m t -> ExID
   RID :: () => RuleID -> ExID
@@ -108,7 +111,6 @@ forceTermMap (TermMap x) = TermMap x
 forceTMap :: TermMap t -> TMap
 forceTMap (TermMap x) = TMap (TermMap x)
 
-
 type instance Index (TermMap t) = TermID t
 type instance IxValue (TermMap t) = TermState t
 
@@ -132,33 +134,69 @@ instance Typeable t => At (TermMap t) where
             Nothing ->
               TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mempty) x
 
-
-type RuleMap = HashMap RuleID RuleState
-type PropMap = () -- HashMap RuleID RuleState
-
 data BindingState = BindingState
-  { _find         :: HashMap UnivID ExID
-  , _terms_       :: TMap
-  , _rules        :: RuleMap
-  , _dependencies :: AdjacencyMap UnivID
+  { _supply        :: Supply
+  , _idents        :: HashMap UnivID ExID
+  , _terms_        :: TMap
+  , _rules         :: HashMap RuleID RuleState
+  , _dependencies  :: AdjacencyMap ExID
+  , _ruleHistories :: HashMap RuleID RuleHistory
   }
-
 
 data TermState t where
 
   Forwarded :: { _target :: TermID t } -> TermState t
   Bound :: { _boundState :: BoundState t } -> TermState t
 
-data RuleState where
-  Merged :: RuleID -> RuleState
-  Watching :: forall m r. TypeRep m -> m [r ()] -> RuleState
-  Updating :: forall m t. TypeRep m -> m (t (VarID m t)) -> RuleState
 
+type PropMap = ()
 data BoundState t = BoundState
   { _termValue :: Maybe (t (TermID t))
   , _subsumed :: HashSet (TermID t)
   , _properties :: PropMap
   }
+
+data RuleState where
+  -- | Rule has been collapsed into another rule
+  Merged :: RuleID -> RuleState
+  -- | Rule that can modify m or generate new rules as is reasonable.
+  Held :: forall m. ()
+           => TypeRep m
+           -> m [Rule m ()]
+           -> RuleState
+
+data RuleHistory = RuleHistory
+  { _nextStep :: HashMap (RuleAction, UnivID) RuleHistory }
+  deriving (Eq, Ord, Show)
+
+
+data RuleAction = Lookup | Bind
+  deriving (Eq, Ord, Show)
+
+-- | The Rule Monad which we use to perform
+data Rule m a where
+  LookupVar :: (Typeable t)
+         => TypeRep t
+         -> VarID m t
+         -> (Maybe (t (Var m t)) -> m [Rule m a])
+         -> Rule m a
+
+  BindVar :: (Typeable t)
+       => TypeRep t
+       -> VarID m t
+       -> m (t (VarID m t))
+       -> m [Rule m a]
+       -> Rule m a
+
+  Pure :: a -> Rule m a
+
+  Act :: m a -> Rule m a
+
+  Fin :: Rule m a
+
+newtype AssumeT m a = AssumeT { getAssumeT :: ReaderT Assumptions m a }
+
+newtype IntBindT m a = BindT { getIntBindT :: StateT BindingState m a }
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config
@@ -168,7 +206,9 @@ makeFieldsNoPrefix ''RuleState
 makeFieldsNoPrefix ''BoundState
 makePrisms ''RuleState
 
-terms :: (Typeable t, Typeable s)
-      => Lens BindingState BindingState (TermMap t) (TermMap s)
-terms = (terms_ :: Lens' BindingState TMap)
-      . (iso getTMap forceTMap)
+class HasTerms s a where
+  terms :: Lens' s a
+
+instance (Typeable a) => HasTerms BindingState (TermMap a) where
+  terms = (terms_ :: Lens' BindingState TMap)
+        . (iso getTMap forceTMap)
