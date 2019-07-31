@@ -49,6 +49,7 @@ type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
 type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
 type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
 
+
 newtype UnivID = UnivID { getUnivID :: Int }
   deriving newtype (Eq, Ord, Show, Hashable, NFData)
 
@@ -187,7 +188,7 @@ data BindingState = BindingState
   , _terms_        :: TMap
   , _rules         :: HashMap RuleID RuleState
   , _dependencies  :: AdjacencyMap ExID
-  , _ruleHistories :: HashMap RuleID RuleHistory
+  , _ruleHistories :: HashMap RuleID RuleHistories
   , _defaultRule   :: RuleMap
   }
 
@@ -216,20 +217,56 @@ data BoundState t = BoundState
   }
 
 data RuleState where
-  -- | Rule has been collapsed into another rule
   Merged :: RuleID -> RuleState
-  -- | Rule that can modify m or generate new rules as is reasonable.
-  Held :: forall m. ()
-    => {} -> RuleState
+  Waiting :: (Typeable m) => TypeRep m -> RuleMeta -> m (Rule m ()) -> RuleState
 
-data RuleHistory = RuleHistory
-  { _nextStep :: HashMap (RuleAction, UnivID) RuleHistory }
+
+data RuleHistories = RuleHistories
+  { _family :: RuleID
+  , _nextStep :: HashMap (RuleAction, UnivID) RuleHistories }
   deriving (Eq, Ord, Show)
 
+data RuleHistory = RuleHistory
+  { _family :: RuleID
+  , _nextStep :: [(RuleAction, UnivID)] }
+  deriving (Eq, Ord, Show)
+
+data RuleMeta = RuleMeta
+  { _history :: RuleHistory
+  , _assumptions :: Assumptions
+  }
 
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
+data Rule (m :: Type -> Type) (a :: Type) where
+  RLookup :: ()
+    => TypeRep t
+    -> Var m a
+    -> (Maybe (t (TermID t)) -> StateT RuleMeta m a)
+    -> Rule m a
+
+  RBind :: ()
+    => TypeRep t
+    -> TermID t
+    -> Assumptions
+    -> StateT RuleMeta m (t (TermID t))
+    -> (TermID t -> StateT RuleMeta m a)
+    -> Rule m a
+
+  RSplit :: Assumptions -> StateT RuleMeta m [Rule m a] -> Rule m a
+
+  RRun :: Assumptions -> StateT RuleMeta m a -> Rule m a
+
+
+instance Monad m => Monad (Rule m) where
+  RLookup t v a k >>= f = RLookup t v (runRule a $ k >=> f)
+  RBind t v a r k >>= f = RBind t v a r (k >=> f)
+  RSplit a k >>= f      = RSplit a (map (map (>=> f)) k)
+  RRun a k >>= f        = RRun a (k >>= (runRule a . f))
+
+instance MonadFail (Rule m) where
+  fail _ = RSplit a $ pure []
 --  The Rule Monad which we use to perform
 -- data Rule m a where
   -- LookupVar :: (Typeable t)

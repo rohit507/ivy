@@ -43,12 +43,6 @@ import Control.Concurrent.Supply
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
-instance (Functor m) -> Functor (RuleF m)
-
-type RAR m a = ReaderT Assumptions (RuleF m) a
--- The full transformer for a rule
-type Rule m a = Rule { getRuleT :: RAR m a }
-
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
@@ -276,49 +270,86 @@ instance () => MonadAssume e t (IntBindT m)  where
   assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
   assumeSubsumed a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
 
--- | This checks whether a particular term
 isAssumedEqualS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-isAssumedEqualS a b = ((pure $ a == b) ||^) $ do
+isAssumedEqualS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
   pure (a' == b')
-    ||^ (with assumption >>= hasEqAssumption a' b')
+    ||^ (with assumptions >>= hasEqAssumption a' b')
     ||^ isAssumedUnifiedS a' b'
     ||^ ( do
       mta <- lookupVarS a'
       mtb <- lookupVarS b'
-      -- check whether the constructors are compatible at least.
       pure
         . maybe False (const True)
         . join $ (eitherToMaybe . getTermEqualities) <$> mta <*> mtb
       )
 
-assumeEqualS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeEqualS = undefined
-
 isAssumedUnifiedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-isAssumedUnifiedS a b = ((pure $ a == b) ||^) $ do
+isAssumedUnifiedS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
-  pure (a' == b')
-    ||^ (with assumption >>= hasUniAssumption a' b')
-
-
-assumeUnifiedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeUnifiedS = undefined
+  pure (a' == b') ||^ (with assumptions >>= hasUniAssumption a' b')
 
 isAssumedSubsumedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-isAssumedSubsumedS = undefined
-
-assumeSubsumedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeSubsumedS = ((pure $ a == b) ||^) $ do
+isAssumedSubsumedS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
   pure (a' == b')
-    ||^ (with assumption >>= hasEqAssumption a' b')
-    ||^ isAssumedUnified a' b'
+    ||^ isAssumeUnified a' b'
+    ||^ (with assumptions >>= hasSubAssertion a' b')
+    ||^ inSubsumedSet a' b'
 
-instance MonadRule e (Rule m) m
+-- TODO :: fix to use the proper
+assumeEqualS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeEqualS a b m = do
+  local (addEqAssumption a b) m
+
+assumeUnifiedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeUnifiedS a b m = do
+  local (addUniAssumption a b) m
+
+assumeSubsumedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeSubsumedS a b m = do
+  local (addSubAssumption a b) m
+
+-- I need to double check this entire instance for logic errors.
+-- In particular how assumptions interact with rules and cyclicality.
+--
+-- There can be many rule closures instantiated as a single rule traverses the
+-- tree in some fashion, and what if that rule ends up backtracking?
+-- Is a historical log a sufficient identifier that we can use it
+-- to prevent needless creation of new rules as they backtrack over
+-- old ones?
+--
+-- Alternately, the better idea is probably to nullify an operation as soon as
+-- it hits an assumption or a member of its visited set.
+-- Since that would imply a cycle has been hit, and any further changes will
+-- just happen as the cleaning operations repeatedly trigger on the lowest
+-- level.
+--
+-- if I try to do this as a free monad, it'll require developing a proper
+-- binding function, especially given that it'll need to hoist operations
+
+addRuleS :: Rule m () -> m ()
+addRuleS = undefined
+
+execRule :: RuleID -> m ()
+execRule = undefined
+
+stepRule :: RuleMeta -> Rule m a -> m (RuleMeta, Rule m a)
+stepRule = undefined
+
+runRule :: Assumptions -> Rule m a -> ReaderT Assumptions m a
+runRule = undefined
+
+-- type RAR m a = ReaderT Assumptions (RuleF m) a
+
+
+-- The full transformer for a rule
+-- type Rule m a = Rule { getRuleT :: RAR m a }
+
+-- instance MonadRule e (Rule m) m
 
 
 newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
@@ -383,23 +414,36 @@ getProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
             => p -> TermID t -> BSM m (Maybe (TermID t'))
 getProperty = undefined
 
+inSubsumedSet :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
+inSubsumedSet = undefined
+
 getTermEqualities :: forall e t. (BSETC e t) => t a -> t b -> Either e [(a,b)]
 getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
-addEqAssumption :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m ()
+addEqAssumption :: forall m t. (BSMTC m t)
+  => TermID t -> TermID t -> Assumptions -> Assumptions
 addEqAssumption = undefined
 
-hasEqAssertion :: TermID t -> TermID t -> Assumption -> BSM m Bool ()
+hasEqAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
 hasEqAssertion = undefined
 
-addUniAssumption :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m ()
+addUniAssumption :: forall m t. (BSMTC m t)
+  => TermID t -> TermID t -> Assumptions ->  Assumptions
 addUniAssumption = undefined
 
-hasUniAssertion :: TermID t -> TermID t -> Assumption -> BSM m Bool ()
+hasUniAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
 hasUniAssertion = undefined
+
+addSubAssumption :: forall m t. (BSMTC m t)
+  => TermID t -> TermID t -> Assumptions -> BSM m Assumptions
+addSubAssumption = undefined
+
+hasSubAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
+hasSubAssertion = undefined
+
 -- type RAM = ReaderT Assumptions
 --
 -- isAssumedEqualR :: TermID t -> TermID t -> RAM m Bool
