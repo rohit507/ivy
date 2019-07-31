@@ -43,6 +43,12 @@ import Control.Concurrent.Supply
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
+instance (Functor m) -> Functor (RuleF m)
+
+type RAR m a = ReaderT Assumptions (RuleF m) a
+-- The full transformer for a rule
+type Rule m a = Rule { getRuleT :: RAR m a }
+
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
@@ -253,24 +259,64 @@ instance (MonadBind e t m) => MonadUnify e t (IntBindT m)
 instance () => MonadAssume e t (IntBindT m)  where
 
   isAssumedEqual :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedEqual = undefined
+  isAssumedEqual a b = IntBindT $ isAssumedEqualS (force a) (force b)
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeEqual = undefined
+  assumeEqual a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
 
   isAssumedUnified :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedUnified = undefined
+  isAssumedUnified a b = IntBindT $ isAssumedEqualS (force a) (force b)
 
-  assumeUnified :: VarIB m t -> VarIB m t -> IntBindT a -> IntBindT a
-  assumeUnified = undefined
+  assumeUnified :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
+  assumeUnified a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
 
   isAssumedSubsumed :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedSubsumed = undefined
+  isAssumedSubsumed a b = IntBindT $ isAssumedEqualS (force a) (force b)
 
   assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeSubsumed = undefined
+  assumeSubsumed a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
+
+-- | This checks whether a particular term
+isAssumedEqualS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
+isAssumedEqualS a b = ((pure $ a == b) ||^) $ do
+  a' <- getRepresentative a
+  b' <- getRepresentative b
+  pure (a' == b')
+    ||^ (with assumption >>= hasEqAssumption a' b')
+    ||^ isAssumedUnifiedS a' b'
+    ||^ ( do
+      mta <- lookupVarS a'
+      mtb <- lookupVarS b'
+      -- check whether the constructors are compatible at least.
+      pure
+        . maybe False (const True)
+        . join $ (eitherToMaybe . getTermEqualities) <$> mta <*> mtb
+      )
+
+assumeEqualS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeEqualS = undefined
+
+isAssumedUnifiedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
+isAssumedUnifiedS a b = ((pure $ a == b) ||^) $ do
+  a' <- getRepresentative a
+  b' <- getRepresentative b
+  pure (a' == b')
+    ||^ (with assumption >>= hasUniAssumption a' b')
 
 
+assumeUnifiedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeUnifiedS = undefined
+
+isAssumedSubsumedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
+isAssumedSubsumedS = undefined
+
+assumeSubsumedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
+assumeSubsumedS = ((pure $ a == b) ||^) $ do
+  a' <- getRepresentative a
+  b' <- getRepresentative b
+  pure (a' == b')
+    ||^ (with assumption >>= hasEqAssumption a' b')
+    ||^ isAssumedUnified a' b'
 
 instance MonadRule e (Rule m) m
 
@@ -337,11 +383,23 @@ getProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
             => p -> TermID t -> BSM m (Maybe (TermID t'))
 getProperty = undefined
 
+getTermEqualities :: forall e t. (BSETC e t) => t a -> t b -> Either e [(a,b)]
+getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
+
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
+addEqAssumption :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m ()
+addEqAssumption = undefined
 
+hasEqAssertion :: TermID t -> TermID t -> Assumption -> BSM m Bool ()
+hasEqAssertion = undefined
 
+addUniAssumption :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m ()
+addUniAssumption = undefined
+
+hasUniAssertion :: TermID t -> TermID t -> Assumption -> BSM m Bool ()
+hasUniAssertion = undefined
 -- type RAM = ReaderT Assumptions
 --
 -- isAssumedEqualR :: TermID t -> TermID t -> RAM m Bool

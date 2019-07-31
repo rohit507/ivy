@@ -39,7 +39,7 @@ import Data.IORef
 import Control.Concurrent.Supply
 
 
-type BSM = RWST Assumptions () BindingState
+type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e)
 type BSMC m = (Monad m)
@@ -220,9 +220,7 @@ data RuleState where
   Merged :: RuleID -> RuleState
   -- | Rule that can modify m or generate new rules as is reasonable.
   Held :: forall m. ()
-           => TypeRep m
-           -> m [Rule m ()]
-           -> RuleState
+    => {} -> RuleState
 
 data RuleHistory = RuleHistory
   { _nextStep :: HashMap (RuleAction, UnivID) RuleHistory }
@@ -232,26 +230,22 @@ data RuleHistory = RuleHistory
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
--- | The Rule Monad which we use to perform
-data Rule m a where
-  LookupVar :: (Typeable t)
-         => TypeRep t
-         -> VarID m t
-         -> (Maybe (t (Var m t)) -> m [Rule m a])
-         -> Rule m a
-
-  BindVar :: (Typeable t)
-       => TypeRep t
-       -> VarID m t
-       -> m (t (VarID m t))
-       -> m [Rule m a]
-       -> Rule m a
-
-  Pure :: a -> Rule m a
-
-  Act :: m a -> Rule m a
-
-  Fin :: Rule m a
+--  The Rule Monad which we use to perform
+-- data Rule m a where
+  -- LookupVar :: (Typeable t)
+         -- => TypeRep t
+         -- -> VarID m t
+         -- -> (Maybe (t (Var m t)) -> m [Rule m a])
+         -- -> Rule m a
+--
+  -- BindVar :: (Typeable t)
+       -- => TypeRep t
+       -- -> VarID m t
+       -- -> m (t (VarID m t))
+       -- -> m [Rule m a]
+       -- -> Rule m a
+--
+  -- Act :: m a -> Rule m a
 
 
 makeFieldsNoPrefix ''Context
@@ -268,3 +262,6 @@ class HasTerms s a where
 instance (Typeable a) => HasTerms BindingState (TermMap a) where
   terms = (terms_ :: Lens' BindingState TMap)
         . (iso getTMap forceTMap)
+
+instance HasAssumptions Assumptions Assumptions where
+  assumptions = id
