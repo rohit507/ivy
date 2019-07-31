@@ -41,7 +41,7 @@ import Control.Monad (ap)
 import Data.IORef
 import Control.Concurrent.Supply
 
-newtype IntBindT m a = IntBindT { getIntBindT :: StateT BindingState m a }
+newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
@@ -53,7 +53,7 @@ instance MonadTrans IntBindT where
 
 instance MonadTransControl IntBindT where
 
-  type StT IntBindT a = StT (StateT BindingState) a
+  type StT IntBindT a = StT BSM a
 
   liftWith = defaultLiftWith IntBindT getIntBindT
   restoreT = defaultRestoreT IntBindT
@@ -80,7 +80,6 @@ instance (BSEMTC e m t, Eq1 t)
 
   redirectVar :: VarIB m t -> VarIB m t -> IntBindT m (VarIB m t)
   redirectVar a b = IntBindT $ force <$> redirectVarS (force a) (force b)
-
 
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
@@ -249,6 +248,33 @@ getPropertyPairsS f mappend mempty a b = do
       pure $ f p (That v)
 
 
+instance (MonadBind e t m) => MonadUnify e t (IntBindT m)
+
+instance () => MonadAssume e t (IntBindT m)  where
+
+  isAssumedEqual :: VarIB m t -> VarIB m t -> IntBindT m Bool
+  isAssumedEqual = undefined
+
+  assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
+  assumeEqual = undefined
+
+  isAssumedUnified :: VarIB m t -> VarIB m t -> IntBindT m Bool
+  isAssumedUnified = undefined
+
+  assumeUnified :: VarIB m t -> VarIB m t -> IntBindT a -> IntBindT a
+  assumeUnified = undefined
+
+  isAssumedSubsumed :: VarIB m t -> VarIB m t -> IntBindT m Bool
+  isAssumedSubsumed = undefined
+
+  assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
+  assumeSubsumed = undefined
+
+
+
+instance MonadRule e (Rule m) m
+
+
 newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
          => m o
 newIdent = map pack $ supply %%= freshId
@@ -262,9 +288,6 @@ addTermToDeps t = dependencies %= G.overlay (G.vertex $ toExID t)
 addTermToIdents :: forall m t. (BSMTC m t) => TermID t -> BSM m ()
 addTermToIdents t = idents . at (force t) .= Just (toExID t)
 
-runDefaultRules :: TermID t -> BSM m ()
-runDefaultRules = undefined
-
 -- | Navigates to representative and returns the termState
 getTermState :: forall m t. (BSMTC m t) => TermID t -> BSM m (TermState t)
 getTermState t = do
@@ -272,11 +295,15 @@ getTermState t = do
   maybeM (panic "unreachable: we were somehow passed an unused term")
     $ use (terms . at @(TermMap t) t)
 
-getRepresentative :: TermID t -> BSM m (TermID t)
-getRepresentative = undefined
-
 freshenTerm :: forall m t. (BSMTC m t) => t (TermID t) -> BSM m (t (TermID t))
 freshenTerm = traverse getRepresentative
+
+-- | Applies the default rules to the
+runDefaultRules :: TermID t -> BSM m ()
+runDefaultRules = undefined
+
+getRepresentative :: TermID t -> BSM m (TermID t)
+getRepresentative = undefined
 
 getDependents :: forall m t. (BSMTC m t) => ExID -> BSM m (HashSet ExID)
 getDependents = undefined
@@ -312,6 +339,9 @@ getProperty = undefined
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
+
+
+
 -- type RAM = ReaderT Assumptions
 --
 -- isAssumedEqualR :: TermID t -> TermID t -> RAM m Bool
@@ -331,9 +361,6 @@ getPropMap = undefined
 --
 -- assumeSubsumedR :: TermID t -> TermID t -> RAM m Bool
 -- assumeSubsumedR = undefined
-
-
-
 
 -- instance MonadProperty e p (IntBindT m) where
 -- instance MonadProperties e (IntBindT m) where

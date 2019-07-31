@@ -39,7 +39,7 @@ import Data.IORef
 import Control.Concurrent.Supply
 
 
-type BSM = StateT BindingState
+type BSM = RWST Assumptions () BindingState
 
 type BSEC e = (Typeable e)
 type BSMC m = (Monad m)
@@ -253,7 +253,6 @@ data Rule m a where
 
   Fin :: Rule m a
 
-newtype AssumeT m a = AssumeT { getAssumeT :: ReaderT Assumptions m a }
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config

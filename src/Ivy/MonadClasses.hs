@@ -97,18 +97,24 @@ class (MonadBind e t m) => MonadUnify e t m where
   --
   --   NOTE :: This should be aware of assumptions
   equals :: Var m t -> Var m t -> m Bool
+  default equals :: (MonadAssume e t m) => Var m t -> Var m t -> m Bool
+  equals = undefined
 
   -- | Unify two terms and return the variable for the result. Once run
   --   both inputs and the return value are all functionally identical.
   --
   --   NOTE :: This also unifies the properties of both variables.
   unify :: Var m t -> Var m t -> m (Var m t)
+  default unify :: (MonadAssume e t m) => Var m t -> Var m t -> m (Var m t)
+  unify = undefined
 
   -- | Ensure that the first term subsumes the second.
   --
   --   NOTE :: This does not ensure that the properties all also subsume each
   --           other. There is no need, since the inputs stay separate.
   subsume :: Var m t -> Var m t -> m (Var m t)
+  default subsume :: (MonadAssume e t m, MonadRule e r m) => Var m t -> Var m t -> m (Var m t)
+  subsume = undefined
 
 
 -- | This class is only relevant to implementers of a MonadProperty.
