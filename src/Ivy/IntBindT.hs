@@ -444,6 +444,56 @@ addSubAssumption = undefined
 hasSubAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
 hasSubAssertion = undefined
 
+-- | Decomposes a rule into a list of sub operations that modify their history.
+stepRule :: Rule m a -> [StateT RuleMeta (Rule m) a]
+stepRule (RLook t v f) = pure <$> do
+  addToHistory Lookup v
+  addToWatched v
+  (lift $ lookupVar v) >>= f
+stepRule (RBind t v getTerm f) = pure <$> do
+  addToHistory Bind v
+  addToModified v
+  getTerm >>= (lift $ bindVar v) >>= f
+stepRule (RRun rs) = concat <$> traverse stepRule rs
+
+-- | Adds rule to the rule set, using the history map to deconflict operations
+--   as needed
+insertRule :: RuleMeta -> Rule m () -> m RuleID
+insertRule = undefined
+  -- check if slug in history tree
+  -- if yes then return that id
+  -- otherwise
+     -- get new RuleID
+     -- insert into rule map
+     -- insert into history map
+     -- add the various dependencies.
+     -- return new is
+
+getRuleFromHistory :: RuleHistory -> m (Maybe RuleID)
+getRuleFromHistory = undefined
+
+redirectRules :: UnivID -> UnivID -> m ()
+redirectRules = undefined
+
+  where
+
+    merge :: RuleHistories -> m RuleHistories
+    merge = undefined
+
+
+runRule :: RuleID -> m ()
+runRule rid = do
+  meta <- getRuleMeta rid
+  rule <- getRule rid
+  results <- traverse (execStateT meta) $ stepRule rule
+  traverse_ (uncurry insertRule) results
+
+getRuleMeta :: RuleID -> m RuleMeta
+getRuleMeta = undefined
+
+getRule :: RuleID -> m (Rule m ())
+getRule = undefined
+
 -- type RAM = ReaderT Assumptions
 --
 -- isAssumedEqualR :: TermID t -> TermID t -> RAM m Bool
@@ -490,17 +540,3 @@ hasSubAssertion = undefined
 -- This instance is weird, in that we need to be aware of both the parent and
 -- child assumptions, and clearly differentiate between them.
 -- instance MonadRule e (AssumeT (Rule (AssumeT (IntBindT m)))) AssumeT (IntBindT m) where
-
-
-instance MonadTrans AssumeT where
-  lift = undefined
-
-instance MonadTransControl AssumeT where
-  liftWith = undefined
-  restoreT = undefined
-
-instance Functor (Rule m) where
-  fmap = undefined
-
-instance Applicative (Rule m) where
-  pure = undefined

@@ -218,7 +218,7 @@ data BoundState t = BoundState
 
 data RuleState where
   Merged :: RuleID -> RuleState
-  Waiting :: (Typeable m) => TypeRep m -> RuleMeta -> m [Rule m ()] -> RuleState
+  Waiting :: (Typeable m) => TypeRep m -> RuleMeta -> Rule m () -> RuleState
 
 
 data RuleHistories = RuleHistories
@@ -241,65 +241,23 @@ data RuleMeta = RuleMeta
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
-data RuleF (a :: Type) where
-  RuleLookup :: (BSTC t)
-    => TypeRep t -> TermID t -> RuleF (Maybe (t (TermID t)))
-  RuleBind   :: (BSTC t)
-    => TypeRep t -> TermID t -> t (TermID t) -> RuleF ()
-  RuleSplit  :: [a] -> RuleF a
+data Rule m a where
+  RLook :: (MonadBind e t m)
+    => TypeRep t
+    -> TermID t
+    -> (Maybe (t (TermID m)) -> StateT RuleMeta (Rule m) a)
+    -> Rule m a
 
-newtype Rule m a = Rule { getRule :: FT RuleF (StateT RuleMeta m) }
+  RBind :: (MonadBind e t m)
+    => TypeRep t
+    -> TermID t
+    -> StateT RuleMeta (Rule m) (t (TermID t))
+    -> (TermID t -> StateT RuleMeta (Rule m) a)
+    -> Rule m a
 
-runRule :: RuleMeta -> Rule m () -> m [(RuleMeta, Rule m ())]
-runRule m r = undefined
-  where
-    ft :: forall r. ()
-       => (() -> StateT RuleMeta m r)
-       -> (forall x. () ::
-             => (x -> StateT RuleMeta m r)
-             -> RuleF x
-             -> StateT RuleMeta r)
-       -> StateT RuleMeta m r
-
-    ft = undefined
-
-    runRuleF :: forall x. ()
-      => (x -> StateT RuleMeta m r)
-      -> RuleF x
-      -> StateT RuleMeta m r
-    runRuleF _ (RuleLookup t v) = do
-      addToHistory Lookup v
-      addToWatched v
-      lift $ lookupVar m
-    runRuleF _ (Bind t v term) = do
-      addToHistory Bind v
-      addToModified v
-    runRuleF $ build (RuleSplit vs) = do
-
-
-
-
-
-
-
--- type FT f m a = forall r. (a -> m r) -> (forall x. (x -> m r) -> f x -> m r) -> m r
-
---  The Rule Monad which we use to perform
--- data Rule m a where
-  -- LookupVar :: (Typeable t)
-         -- => TypeRep t
-         -- -> VarID m t
-         -- -> (Maybe (t (Var m t)) -> m [Rule m a])
-         -- -> Rule m a
---
-  -- BindVar :: (Typeable t)
-       -- => TypeRep t
-       -- -> VarID m t
-       -- -> m (t (VarID m t))
-       -- -> m [Rule m a]
-       -- -> Rule m a
---
-  -- Act :: m a -> Rule m a
+  RRun :: ()
+    => [Rule m a]
+    -> Rule m a
 
 
 makeFieldsNoPrefix ''Context

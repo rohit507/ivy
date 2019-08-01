@@ -167,7 +167,12 @@ class ( forall t. (MonadBind e t m) => MonadBind e t r
       , Var m ~ Var r
       ) => MonadRule e r m | m -> e, m -> r, r -> e where
 
-  addRule :: r a -> m ()
+  -- | Default implementation exists for r ~ m, where addRule is just identity.
+  --   since any recursively defined rules should just become a single
+  --   larger rule.
+  addRule :: r () -> m ()
+  default addRule :: (r ~ m) => r () -> m ()
+  addRule = id
 
 
 data BinOpContext a b e t m = BinOpContext
