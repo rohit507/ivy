@@ -116,6 +116,7 @@ ghc-options:
   # only be warnings when developing. A proper build on the other hand should
   # have no warnings attached
   - -fno-warn-name-shadowing
+  - -Wwarn=orphans
   - -Wwarn=redundant-constraints
   - -Wwarn=unused-matches
   - -Wwarn=deprecations

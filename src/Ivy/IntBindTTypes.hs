@@ -89,6 +89,12 @@ instance Newtype RuleID Int where
 force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
 force = pack . unpack
 
+forceTID :: VarID m t -> TermID t
+forceTID = force
+
+forceVID :: forall m t. TermID t -> VarID m t
+forceVID = force
+
 data ExID where
   TID :: (BSTC t) => TypeRep t -> TermID t -> ExID
   RID :: () => RuleID -> ExID
@@ -173,8 +179,10 @@ instance Typeable t => At (TermMap t) where
               TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mempty) x
 
 data DefaultRule (t :: Type -> Type) where
-  DefaultRule :: forall t e m r. (MonadRule e r m, MonadBind e t m)
-              => TypeRep e -> TypeRep m -> TypeRep r -> (Var m t -> m [r ()])
+  DefaultRule :: (MonadRule e m, MonadBind e t m)
+              => TypeRep e
+              -> TypeRep m
+              -> (Var m t -> Rule m ())
               -> DefaultRule t
 
 data RMap
@@ -219,8 +227,10 @@ data BoundState t = BoundState
 data RuleState where
   Merged :: RuleID -> RuleState
   Waiting :: (Typeable m)
-    => TypeRep m -> RuleMeta -> [StateT RuleMeta (Rule m) ()] -> RuleState
+    => TypeRep m -> RuleMeta -> Rule m () -> RuleState
 
+
+newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
 data RuleHistories = RuleHistories
   { _family :: RuleID
@@ -242,35 +252,35 @@ data RuleMeta = RuleMeta
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
+type RT m = StateT RuleMeta m
+type RTIB m = RT (IntBindT m)
+
+type RuleIB m = RuleT (IntBindT m)
+
 -- | Rules let us describe invariants over a term map as actions that
 --   can be run repeatedly/incrementally executed. In general they only
 --   really hook into lookups and bind in order to correctly capture
---   dependencies where it matters
-data Rule m a where
+--   dependencies where it matters.
+--
+--   Despite the T suffix this isn't actually (yet) a monad transformer.
+--   It mostly exists to
+data RuleT m a where
   RLook :: (MonadBind e t m)
-    => { _type :: TypeRep t, _look :: Look m t a } -> Rule m a
+    => { _type :: TypeRep t
+       , _var :: TermID t
+       , _process :: Maybe (t (TermID t)) -> RT m a
+       } -> RuleT m a
 
   RBind :: (MonadBind e t m)
-    => { _type :: TypeRep t, _bound :: Bound m t a } -> Rule m a
+    => { _type :: TypeRep t
+       , _var :: TermID t
+       , _term :: TermID t -> RT m (t (TermID t))
+       , _continue :: TermID t -> RT m a
+       } -> RuleT m a
 
   RRun :: ()
-    => { _actions :: [StateT RuleMeta (Rule m) a]
-       }-> Rule m a
-
-data Look m t a where
-  Look :: (MonadBind e m t)
-    => { _type :: TypeRep t
-       , _target :: TermID t
-       , _process :: Maybe (t (TermID m)) -> StateT RuleMeta (Rule m) a
-       } -> Look m t a
-
-data Bound m t a where
-  Bound :: (MonadBind e t m)
-    => { _target :: TermID t
-       , _term :: StateT RuleMeta (Rule m) (t (TermID t))
-       , _continue :: TermID t -> StateT RuleMeta (Rule m) a
-       } -> Bind m t a
-
+    => { _actions :: [RT m a]
+       } -> RuleT m a
 
 
 makeFieldsNoPrefix ''Context
@@ -290,3 +300,12 @@ instance (Typeable a) => HasTerms BindingState (TermMap a) where
 
 instance HasAssumptions Assumptions Assumptions where
   assumptions = id
+
+instance Monoid w => MonadTransControl (RWST r w s) where
+   type StT (RWST r w s) a = (a, s, w)
+   liftWith f =
+       rwsT $ \r s -> map (\x -> (x, s, mempty :: w))
+                                   (f $ \t -> runRWST t r s)
+   restoreT mSt = rwsT $ \_ _ -> mSt
+   {-# INLINABLE liftWith #-}
+   {-# INLINABLE restoreT #-}

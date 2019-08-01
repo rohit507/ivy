@@ -41,8 +41,6 @@ import Control.Monad (ap)
 import Data.IORef
 import Control.Concurrent.Supply
 
-newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
-
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
@@ -61,7 +59,7 @@ instance MonadTransControl IntBindT where
 type VarIB m = VarID (IntBindT m)
 
 instance (BSEMTC e m t, Eq1 t)
-         => MonadBind e t (IntBindT m) where
+         => MonadBind e (IntBindT m) t where
 
   type Var (IntBindT m) = VarID (IntBindT m)
 
@@ -178,6 +176,7 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t)) => MonadProperties e (IntBind
       mappendM' :: a -> a -> BSM m a
       mappendM' a b = getIntBindT $ mappendM a b
 
+
 getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
     => (forall t' p proxy. (BSEMTC e m t', Property p t t', MonadProperty e p (IntBindT m))
               => proxy p -> These (TermID t') (TermID t') -> BSM m a)
@@ -248,70 +247,142 @@ getPropertyPairsS f mappend mempty a b = do
       pure $ f p (That v)
 
 
-instance (MonadBind e t m) => MonadUnify e t (IntBindT m)
+instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadUnify e (IntBindT m) t where
 
-instance () => MonadAssume e t (IntBindT m)  where
+  equals = undefined
+  unify = undefined
+  subsume = undefined
+
+instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
 
   isAssumedEqual :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedEqual a b = IntBindT $ isAssumedEqualS (force a) (force b)
+  isAssumedEqual a b = IntBindT $ isAssumedEqualS @e @_ @t (force a) (force b)
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeEqual a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
+  assumeEqual a b m = IntBindT $ assumeEqualS (force a) (force b) (getIntBindT m)
 
   isAssumedUnified :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedUnified a b = IntBindT $ isAssumedEqualS (force a) (force b)
+  isAssumedUnified a b = IntBindT $ isAssumedUnifiedS (force a) (force b)
 
   assumeUnified :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeUnified a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
+  assumeUnified a b m = IntBindT $ assumeUnifiedS (force a) (force b) (getIntBindT m)
 
   isAssumedSubsumed :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedSubsumed a b = IntBindT $ isAssumedEqualS (force a) (force b)
+  isAssumedSubsumed a b = IntBindT $ isAssumedSubsumedS (force a) (force b)
 
   assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeSubsumed a b m = IntBindT $ assumeEqualS (force a) (force b) (runIntBindT m)
+  assumeSubsumed a b m = IntBindT $ assumeSubsumedS (force a) (force b) (getIntBindT m)
 
-isAssumedEqualS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
+isAssumedEqualS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m Bool
 isAssumedEqualS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
   pure (a' == b')
-    ||^ (with assumptions >>= hasEqAssumption a' b')
+    ||^ (view assumptions >>= hasEqAssumption a' b')
     ||^ isAssumedUnifiedS a' b'
     ||^ ( do
       mta <- lookupVarS a'
       mtb <- lookupVarS b'
       pure
         . maybe False (const True)
-        . join $ (eitherToMaybe . getTermEqualities) <$> mta <*> mtb
+        . join $ (\ ta tb -> eitherToMaybe $ getTermEqualities @_ @_ @e @t ta tb) <$> mta <*> mtb
       )
 
 isAssumedUnifiedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 isAssumedUnifiedS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
-  pure (a' == b') ||^ (with assumptions >>= hasUniAssumption a' b')
+  pure (a' == b') ||^ (view assumptions >>= hasUniAssumption a' b')
 
 isAssumedSubsumedS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 isAssumedSubsumedS a b = do
   a' <- getRepresentative a
   b' <- getRepresentative b
   pure (a' == b')
-    ||^ isAssumeUnified a' b'
-    ||^ (with assumptions >>= hasSubAssertion a' b')
+    ||^ isAssumedUnifiedS a' b'
+    ||^ (view assumptions >>= hasSubAssumption a' b')
     ||^ inSubsumedSet a' b'
 
--- TODO :: fix to use the proper
 assumeEqualS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeEqualS a b m = do
-  local (addEqAssumption a b) m
+assumeEqualS a b m = local (assumptions %~ addEqAssumption a b) m
 
 assumeUnifiedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeUnifiedS a b m = do
-  local (addUniAssumption a b) m
+assumeUnifiedS a b m = local (assumptions %~ addUniAssumption a b) m
 
 assumeSubsumedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
-assumeSubsumedS a b m = do
-  local (addSubAssumption a b) m
+assumeSubsumedS a b m = local (assumptions %~ addSubAssumption a b) m
+
+instance Functor m => Functor (RuleT m) where
+  fmap = undefined
+
+instance (Monad m) => Applicative (RuleT m) where
+  pure = undefined
+  (<*>) = ap
+
+-- | Yeah, no idea if this will work, the broad idea is we can compress
+--   actions in m into RRun which we can execute, and the rest of the operations
+--   can stay indivisible.
+instance (Monad m) => Monad (RuleT m) where
+  (>>=) = undefined
+
+instance (MonadError e m) => MonadError e (RuleT m) where
+  throwError = undefined
+
+instance (MonadBind e m t
+         , Hashable (Var m t)
+         , Eq (Var m t)
+         )
+  => MonadBind e (RuleT m) t where
+
+  type Var (RuleT m) = Var m
+
+  freeVar = undefined
+  bindVar = undefined
+  lookupVar = undefined
+  redirectVar = undefined
+
+instance (MonadUnify e m t) => MonadUnify e (RuleT m) t where
+
+  equals = undefined
+  unify = undefined
+  subsume = undefined
+
+instance (MonadAssume e m t) => MonadAssume e (RuleT m) t
+
+instance (MonadProperty e p m) => MonadProperty e p (RuleT m) where
+
+instance (MonadError e m)
+  => MonadRule e (IntBindT m) where
+  type Rule (IntBindT m) = RuleT (IntBindT m)
+  addRule = undefined
+
+instance (MonadError e m) => MonadRule e (RuleT m) where
+  type Rule (RuleT m) = RuleT m
+  addRule = id
+
+-- | Decompose a rule into a list of actions we can run to get the
+--   next step in the rule.
+execRule :: forall a m. (BSMC m) => RuleIB m a -> [RTIB m (RuleIB m a)]
+execRule (RLook t v k) = pure $ do
+  let v' = forceVID @(IntBindT m) v
+  addToWatched v
+  addToHistory Lookup v
+  m <- k =<< (map (map forceTID) <$> (lift $ lookupVar v'))
+  pure $ pure m
+
+execRule (RBind t v g k) = pure $ do
+  addToModified v
+  addToHistory Bind v
+  term <- g v
+  new <- lift $ bindVar (forceVID v) (forceVID @(IntBindT m) <$> term)
+  res <- k (forceTID new)
+  pure $ pure res
+
+execRule (RRun as) = map (map _) as
+
+
+
+-- | Run action
 
 -- I need to double check this entire instance for logic errors.
 -- In particular how assumptions interact with rules and cyclicality.
@@ -330,19 +401,6 @@ assumeSubsumedS a b m = do
 --
 -- if I try to do this as a free monad, it'll require developing a proper
 -- binding function, especially given that it'll need to hoist operations
-
-addRuleS :: Rule m () -> m ()
-addRuleS = undefined
-
-execRule :: RuleID -> m ()
-execRule = undefined
-
-stepRule :: RuleMeta -> Rule m a -> m (RuleMeta, Rule m a)
-stepRule = undefined
-
-runRule :: Assumptions -> Rule m a -> ReaderT Assumptions m a
-runRule = undefined
-
 
 
 newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
@@ -410,38 +468,39 @@ getProperty = undefined
 inSubsumedSet :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 inSubsumedSet = undefined
 
-getTermEqualities :: forall e t. (BSETC e t) => t a -> t b -> Either e [(a,b)]
+getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
+  => t a -> t b -> Either e [(a,b)]
 getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
-addEqAssumption :: forall m t. (BSMTC m t)
+addEqAssumption :: forall t. (BSTC t)
   => TermID t -> TermID t -> Assumptions -> Assumptions
 addEqAssumption = undefined
 
-hasEqAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
-hasEqAssertion = undefined
+hasEqAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasEqAssumption = undefined
 
-addUniAssumption :: forall m t. (BSMTC m t)
+addUniAssumption :: forall t. (BSTC t)
   => TermID t -> TermID t -> Assumptions ->  Assumptions
 addUniAssumption = undefined
 
-hasUniAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
-hasUniAssertion = undefined
+hasUniAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasUniAssumption = undefined
 
-addSubAssumption :: forall m t. (BSMTC m t)
-  => TermID t -> TermID t -> Assumptions -> BSM m Assumptions
+addSubAssumption :: forall t. (BSTC t)
+  => TermID t -> TermID t -> Assumptions -> Assumptions
 addSubAssumption = undefined
 
-hasSubAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
-hasSubAssertion = undefined
+hasSubAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasSubAssumption = undefined
 
 
 
 -- | Adds rule to the rule set, using the history map to deconflict operations
 --   as needed
-insertRule :: RuleMeta -> Rule m () -> m RuleID
+insertRule :: RuleMeta -> RuleIB m () -> m RuleID
 insertRule = undefined
   -- check if slug in history tree
   -- if yes then return that id
@@ -452,30 +511,16 @@ insertRule = undefined
      -- add the various dependencies.
      -- return new is
 
-getRuleFromHistory :: RuleHistory -> m (Maybe RuleID)
-getRuleFromHistory = undefined
 
-redirectRules :: UnivID -> UnivID -> m ()
-redirectRules = undefined
+addToWatched :: TermID t -> RTIB m ()
+addToWatched = undefined
 
-  where
+addToModified :: TermID t -> RTIB m ()
+addToModified = undefined
 
-    merge :: RuleHistories -> m RuleHistories
-    merge = undefined
+addToHistory :: (Newtype n Int) => RuleAction -> n -> RTIB m ()
+addToHistory = undefined
 
-
-runRule :: RuleID -> m ()
-runRule rid = do
-  meta <- getRuleMeta rid
-  rule <- getRule rid
-  results <- traverse (execStateT meta) $ stepRule rule
-  traverse_ (uncurry insertRule) results
-
-getRuleMeta :: RuleID -> m RuleMeta
-getRuleMeta = undefined
-
-getRule :: RuleID -> m (Rule m ())
-getRule = undefined
 
 -- type RAM = ReaderT Assumptions
 --

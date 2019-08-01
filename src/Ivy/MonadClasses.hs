@@ -57,7 +57,7 @@ class ( Typeable t
       , Hashable (Var m t)
       , Eq (Var m t)
       , MonadError e m)
-    => MonadBind (e :: Type) t m | m -> e where
+    => MonadBind (e :: Type) m t | m -> e where
 
   type Var m :: (Type -> Type) -> Type
 
@@ -113,7 +113,7 @@ class (MonadBind e m t) => MonadUnify e m t where
   --   NOTE :: This does not ensure that the properties all also subsume each
   --           other. There is no need, since the inputs stay separate.
   subsume :: Var m t -> Var m t -> m (Var m t)
-  default subsume :: (MonadAssume e m t, MonadRule e r m) => Var m t -> Var m t -> m (Var m t)
+  default subsume :: (MonadAssume e m t, MonadRule e m) => Var m t -> Var m t -> m (Var m t)
   subsume = undefined
 
 
@@ -159,19 +159,21 @@ class (MonadUnify e m t) => MonadAssume e m t where
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
-class ( forall t. (MonadBind e m t) => MonadBind e r t
-      , forall t. (MonadUnify e m t) => MonadUnify e r t
-      , forall t. (MonadAssume e m t) => MonadAssume e r t
-      , forall p. (MonadProperty e p m) => MonadProperty e p r
-      , MonadRule e r r
-      , Var m ~ Var r
-      ) => MonadRule e r m | m -> e, m -> r, r -> e where
+class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
+      , forall t. (MonadUnify e m t) => MonadUnify e (Rule m) t
+      , forall t. (MonadAssume e m t) => MonadAssume e (Rule m) t
+      , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
+      , Var m ~ Var (Rule m)
+      , Rule (Rule m) ~ (Rule m)
+      ) => MonadRule e m | m -> e where
+
+  type Rule m :: Type -> Type
 
   -- | Default implementation exists for r ~ m, where addRule is just identity.
   --   since any recursively defined rules should just become a single
   --   larger rule.
-  addRule :: r () -> m ()
-  default addRule :: (r ~ m) => r () -> m ()
+  addRule :: Rule m () -> m ()
+  default addRule :: (Rule m ~ m) => Rule m () -> m ()
   addRule = id
 
 
