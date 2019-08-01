@@ -86,18 +86,18 @@ class (Typeable p) => MonadProperty e p m where
   --   Properties are many-to-one relationships between terms. For instance
   --   many terms can have the same type, but no term can have multiple
   --   types.
-  propertyOf :: (MonadBind e t m, MonadBind e t' m, Property p t t')
+  propertyOf :: (MonadBind e m t, MonadBind e m t', Property p t t')
       => p -> Var m t -> m (Var m t')
 
 
-class (MonadBind e t m) => MonadUnify e t m where
+class (MonadBind e m t) => MonadUnify e m t where
 
   -- | Check whether two terms are equal. i.e That they could be unified without
   --   an error.
   --
   --   NOTE :: This should be aware of assumptions
   equals :: Var m t -> Var m t -> m Bool
-  default equals :: (MonadAssume e t m) => Var m t -> Var m t -> m Bool
+  default equals :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
   equals = undefined
 
   -- | Unify two terms and return the variable for the result. Once run
@@ -105,7 +105,7 @@ class (MonadBind e t m) => MonadUnify e t m where
   --
   --   NOTE :: This also unifies the properties of both variables.
   unify :: Var m t -> Var m t -> m (Var m t)
-  default unify :: (MonadAssume e t m) => Var m t -> Var m t -> m (Var m t)
+  default unify :: (MonadAssume e m t) => Var m t -> Var m t -> m (Var m t)
   unify = undefined
 
   -- | Ensure that the first term subsumes the second.
@@ -113,7 +113,7 @@ class (MonadBind e t m) => MonadUnify e t m where
   --   NOTE :: This does not ensure that the properties all also subsume each
   --           other. There is no need, since the inputs stay separate.
   subsume :: Var m t -> Var m t -> m (Var m t)
-  default subsume :: (MonadAssume e t m, MonadRule e r m) => Var m t -> Var m t -> m (Var m t)
+  default subsume :: (MonadAssume e m t, MonadRule e r m) => Var m t -> Var m t -> m (Var m t)
   subsume = undefined
 
 
@@ -122,7 +122,7 @@ class (MonadBind e t m) => MonadUnify e t m where
 --   property pairs for some term, and appropriately handle them.
 class MonadProperties e m where
 
-  getPropertyPairs :: forall a t. (MonadBind e t m)
+  getPropertyPairs :: forall a t. (MonadBind e m t)
       => (forall t' p proxy. ( MonadProperty e p m
                         , Property p t t')
                       => proxy p -> These (Var m t') (Var m t') -> m a)
@@ -136,7 +136,7 @@ class MonadProperties e m where
 --
 --   This basically makes it easier to handle coinductive reasoning about
 --   equality, unity, and subsumption.
-class (MonadUnify e t m) => MonadAssume e t m where
+class (MonadUnify e m t) => MonadAssume e m t where
 
   -- | Are the two terms equal
   isAssumedEqual :: Var m t -> Var m t -> m Bool
@@ -159,9 +159,9 @@ class (MonadUnify e t m) => MonadAssume e t m where
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
-class ( forall t. (MonadBind e t m) => MonadBind e t r
-      , forall t. (MonadUnify e t m) => MonadUnify e t r
-      , forall t. (MonadAssume e t m) => MonadAssume e t r
+class ( forall t. (MonadBind e m t) => MonadBind e r t
+      , forall t. (MonadUnify e m t) => MonadUnify e r t
+      , forall t. (MonadAssume e m t) => MonadAssume e r t
       , forall p. (MonadProperty e p m) => MonadProperty e p r
       , MonadRule e r r
       , Var m ~ Var r
@@ -175,7 +175,7 @@ class ( forall t. (MonadBind e t m) => MonadBind e t r
   addRule = id
 
 
-data BinOpContext a b e t m = BinOpContext
+data BinOpContext a b e m t = BinOpContext
   { check :: These (Var m t) (Var m t) -> m (Maybe a)
   , assume :: These (Var m t) (Var m t) -> m (Maybe b) -> m (Maybe b)
   , handle :: e -> m b
@@ -184,8 +184,8 @@ data BinOpContext a b e t m = BinOpContext
   }
 
 {-
-recBinOpF :: forall a b e t m. (MonadBind e t m, JoinSemiLattice1 e t)
-         => BinOpContext a b e t m
+recBinOpF :: forall a b e m t. (MonadBind e m t, JoinSemiLattice1 e t)
+         => BinOpContext a b e m t
          -> (These (Var m t) (Var m t) -> m a)
          -> These (Var m t) (Var m t)
          -> m a
@@ -223,8 +223,8 @@ recBinOpF BinOpContext{..} = \ recurse inputs ->
       Left e -> handle e
       Right tu -> traversing f tu
 
-recBinOp :: forall a b e t m. (MonadBind e t m, JoinSemiLattice1 e t)
-         => BinOpContext a b e t m
+recBinOp :: forall a b e m t. (MonadBind e m t, JoinSemiLattice1 e t)
+         => BinOpContext a b e m t
          -> These (Var m t) (Var m t)
          -> m a
 recBinOp c = fix (recBinOpF c)
@@ -232,7 +232,7 @@ recBinOp c = fix (recBinOpF c)
 type OpSet m = HashSet (TVar m, TVar m)
 
 data TVar m where
-  TVar :: (MonadBind e t m) => TypeRep t -> Var m t -> TVar m
+  TVar :: (MonadBind e m t) => TypeRep t -> Var m t -> TVar m
 
 instance Hashable (TVar m) where
   hashWithSalt s (TVar _ v) = hashWithSalt s v
@@ -244,13 +244,13 @@ instance Eq (TVar m) where
 
 -- | Returns nothing if the terms aren't equal, otherwise it returns a list
 --   of terms that should be unified to unify the input terms.
-defaultEquals :: forall e t m. (MonadAssume e t m, MonadProperties e m, JoinSemiLattice1 e t)
+defaultEquals :: forall e m t. (MonadAssume e m t, MonadProperties e m, JoinSemiLattice1 e t)
    => Var m t -> Var m t -> m Bool
 defaultEquals a b = recBinOp context (These a b)
 
   where
 
-    context :: BinOpContext Bool Bool e t m
+    context :: BinOpContext Bool Bool e m t
     context = BinOpContext{..}
 
     traversing :: forall c. (c -> m Bool) -> t c -> m Bool
@@ -280,13 +280,13 @@ defaultEquals a b = recBinOp context (These a b)
         getEq _ _ = pure True
 
 -- | unifies two terms as needed
-defaultUnify :: forall e t m. (MonadAssume e t m, MonadProperties e m, JoinSemiLattice1 e t)
+defaultUnify :: forall e m t. (MonadAssume e m t, MonadProperties e m, JoinSemiLattice1 e t)
    => Var m t -> Var m t -> m (Var m t)
 defaultUnify a b = recBinOp context (These a b)
 
   where
 
-    context :: BinOpContext (Var m t) (t (Var m t)) e t m
+    context :: BinOpContext (Var m t) (t (Var m t)) e m t
     context = BinOpContext{..}
 
     check (This a) = pure $ Just a
@@ -326,7 +326,7 @@ defaultUnify a b = recBinOp context (These a b)
 --           mapping from subsumed to subsumer. It'll end up duplicating terms
 --           from the subsumer if they're referenced multiple times.
 defaultSubsume :: forall e t r m. ( MonadRule e r m
-                          , MonadBind e t m
+                          , MonadBind e m t
                           , MonadBind e t r
                           , MonadAssume e t r
                           , JoinSemiLattice1 e t

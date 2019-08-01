@@ -243,61 +243,34 @@ data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
 -- | Rules let us describe invariants over a term map as actions that
---   can be run repeatedly/incrementally executed.
+--   can be run repeatedly/incrementally executed. In general they only
+--   really hook into lookups and bind in order to correctly capture
+--   dependencies where it matters
 data Rule m a where
   RLook :: (MonadBind e t m)
-    => TypeRep t
-    -> TermID t
-    -> (Maybe (t (TermID m)) -> StateT RuleMeta (Rule m) a)
-    -> Rule m a
+    => { _type :: TypeRep t, _look :: Look m t a } -> Rule m a
 
   RBind :: (MonadBind e t m)
-    => TypeRep t
-    -> TermID t
-    -> StateT RuleMeta (Rule m) (t (TermID t))
-    -> (TermID t -> StateT RuleMeta (Rule m) a)
-    -> Rule m a
-
-  RPure :: a -> Rule m a
+    => { _type :: TypeRep t, _bound :: Bound m t a } -> Rule m a
 
   RRun :: ()
-    => [StateT RuleMeta (Rule m) (Rule m a)]
-    -> Rule m a
+    => { _actions :: [StateT RuleMeta (Rule m) a]
+       }-> Rule m a
 
-instance Functor m => Functor (Rule m) where
-  fmap f (RLook t v k) = RLook t v $ (\ mt -> f <$> k)
-  fmap f (RBind t v a k) = RBind t v a $ (\ mt -> f <$> k)
-  fmap f (RRun r) = RRun $ map (map f) <$> r
+data Look m t a where
+  Look :: (MonadBind e m t)
+    => { _type :: TypeRep t
+       , _target :: TermID t
+       , _process :: Maybe (t (TermID m)) -> StateT RuleMeta (Rule m) a
+       } -> Look m t a
 
-instance (Monad m) => Applicative (Rule m) where
-  pure = RPure
-  (<*>) = ap
+data Bound m t a where
+  Bound :: (MonadBind e t m)
+    => { _target :: TermID t
+       , _term :: StateT RuleMeta (Rule m) (t (TermID t))
+       , _continue :: TermID t -> StateT RuleMeta (Rule m) a
+       } -> Bind m t a
 
--- | Yeah, no idea if this will work, the broad idea is we can compress
---   actions in m into RRun which we can execute, and the rest of the operations
---   can stay indivisible.
-instance (Monad m) => Monad (Rule m) where
-  RPure a >>= f = f a
-  RRun  s >>= f = RRun . stepRule . map (join . map (>>= f)) $ s
-  RLook t v k >>= f = undefined
-  RBind t v r k >>= f = undefined
-
-drop :: StateT RuleMeta (Rule m) a
-     -> (a -> Rule m b)
-     -> [StateT RuleMeta (Rule m) b]
-drop s f = map join . sequenceA . map execRule . map f $ s
-
--- | Decomposes a rule into a list of sub operations that modify their history.
-stepRule :: Rule m a -> [StateT RuleMeta (Rule m) a]
-stepRule (RLook t v f) = pure $ do
-  addToHistory Lookup v
-  addToWatched v
-  (lift $ lookupVar v) >>= f
-stepRule (RBind t v getTerm f) = pure $ do
-  addToHistory Bind v
-  addToModified v
-  getTerm >>= (lift $ bindVar v) >>= f
-stepRule (RRun rs) = rs
 
 
 makeFieldsNoPrefix ''Context

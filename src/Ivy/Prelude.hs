@@ -34,7 +34,6 @@ import Data.Functor.Classes as P (liftEq)
 import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
-import Control.Monad.Trans.Free.Church as P
 import Control.Newtype as P
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
