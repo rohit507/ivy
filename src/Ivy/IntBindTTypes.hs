@@ -255,9 +255,41 @@ data Rule m a where
     -> (TermID t -> StateT RuleMeta (Rule m) a)
     -> Rule m a
 
+  RPure :: StateT RuleMeta (Rule m) a -> Rule m a
+
   RRun :: ()
     => [Rule m a]
     -> Rule m a
+
+instance Functor m => Functor (Rule m) where
+  fmap f (RLook t v k) = RLook t v $ (\ mt -> f <$> k)
+  fmap f (RBind t v a k) = RBind t v a $ (\ mt -> f <$> k)
+  fmap f (RRun r) = RRun $ map f <$> r
+  fmap f (RPure a) = RPure a
+
+instance (Monad m) => Applicative (Rule m) where
+  pure = RPure . pure
+  (<*>) = ap
+
+instance (Monad m) => Monad (Rule m) where
+  r >>= f = RRun $ do
+    rule <- stepRule r
+    case rule of
+      RRun rs -> rs >>= stepRule . f
+      a -> pure a
+
+-- | Decomposes a rule into a list of sub operations that modify their history.
+stepRule :: Rule m a -> [StateT RuleMeta (Rule m) a]
+stepRule (RPure m) = pure m
+stepRule (RLook t v f) = pure <$> do
+  addToHistory Lookup v
+  addToWatched v
+  (lift $ lookupVar v) >>= f
+stepRule (RBind t v getTerm f) = pure <$> do
+  addToHistory Bind v
+  addToModified v
+  getTerm >>= (lift $ bindVar v) >>= f
+stepRule (RRun rs) = rs >>= stepRule
 
 
 makeFieldsNoPrefix ''Context

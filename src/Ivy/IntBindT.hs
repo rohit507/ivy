@@ -343,13 +343,6 @@ stepRule = undefined
 runRule :: Assumptions -> Rule m a -> ReaderT Assumptions m a
 runRule = undefined
 
--- type RAR m a = ReaderT Assumptions (RuleF m) a
-
-
--- The full transformer for a rule
--- type Rule m a = Rule { getRuleT :: RAR m a }
-
--- instance MonadRule e (Rule m) m
 
 
 newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
@@ -444,17 +437,7 @@ addSubAssumption = undefined
 hasSubAssertion :: TermID t -> TermID t -> Assumptions -> BSM m Bool ()
 hasSubAssertion = undefined
 
--- | Decomposes a rule into a list of sub operations that modify their history.
-stepRule :: Rule m a -> [StateT RuleMeta (Rule m) a]
-stepRule (RLook t v f) = pure <$> do
-  addToHistory Lookup v
-  addToWatched v
-  (lift $ lookupVar v) >>= f
-stepRule (RBind t v getTerm f) = pure <$> do
-  addToHistory Bind v
-  addToModified v
-  getTerm >>= (lift $ bindVar v) >>= f
-stepRule (RRun rs) = concat <$> traverse stepRule rs
+
 
 -- | Adds rule to the rule set, using the history map to deconflict operations
 --   as needed
