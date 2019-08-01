@@ -218,7 +218,7 @@ data BoundState t = BoundState
 
 data RuleState where
   Merged :: RuleID -> RuleState
-  Waiting :: (Typeable m) => TypeRep m -> RuleMeta -> m (Rule m ()) -> RuleState
+  Waiting :: (Typeable m) => TypeRep m -> RuleMeta -> m [Rule m ()] -> RuleState
 
 
 data RuleHistories = RuleHistories
@@ -233,40 +233,57 @@ data RuleHistory = RuleHistory
 
 data RuleMeta = RuleMeta
   { _history :: RuleHistory
+  , _watched :: HashSet UnivID
+  , _modified :: HashSet UnivID
   , _assumptions :: Assumptions
   }
 
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
-data Rule (m :: Type -> Type) (a :: Type) where
-  RLookup :: ()
-    => TypeRep t
-    -> Var m a
-    -> (Maybe (t (TermID t)) -> StateT RuleMeta m a)
-    -> Rule m a
+data RuleF (a :: Type) where
+  RuleLookup :: (BSTC t)
+    => TypeRep t -> TermID t -> RuleF (Maybe (t (TermID t)))
+  RuleBind   :: (BSTC t)
+    => TypeRep t -> TermID t -> t (TermID t) -> RuleF ()
+  RuleSplit  :: [a] -> RuleF a
 
-  RBind :: ()
-    => TypeRep t
-    -> TermID t
-    -> Assumptions
-    -> StateT RuleMeta m (t (TermID t))
-    -> (TermID t -> StateT RuleMeta m a)
-    -> Rule m a
+newtype Rule m a = Rule { getRule :: FT RuleF (StateT RuleMeta m) }
 
-  RSplit :: Assumptions -> StateT RuleMeta m [Rule m a] -> Rule m a
+runRule :: RuleMeta -> Rule m () -> m [(RuleMeta, Rule m ())]
+runRule m r = undefined
+  where
+    ft :: forall r. ()
+       => (() -> StateT RuleMeta m r)
+       -> (forall x. () ::
+             => (x -> StateT RuleMeta m r)
+             -> RuleF x
+             -> StateT RuleMeta r)
+       -> StateT RuleMeta m r
 
-  RRun :: Assumptions -> StateT RuleMeta m a -> Rule m a
+    ft = undefined
+
+    runRuleF :: forall x. ()
+      => (x -> StateT RuleMeta m r)
+      -> RuleF x
+      -> StateT RuleMeta m r
+    runRuleF _ (RuleLookup t v) = do
+      addToHistory Lookup v
+      addToWatched v
+      lift $ lookupVar m
+    runRuleF _ (Bind t v term) = do
+      addToHistory Bind v
+      addToModified v
+    runRuleF $ build (RuleSplit vs) = do
 
 
-instance Monad m => Monad (Rule m) where
-  RLookup t v a k >>= f = RLookup t v (runRule a $ k >=> f)
-  RBind t v a r k >>= f = RBind t v a r (k >=> f)
-  RSplit a k >>= f      = RSplit a (map (map (>=> f)) k)
-  RRun a k >>= f        = RRun a (k >>= (runRule a . f))
 
-instance MonadFail (Rule m) where
-  fail _ = RSplit a $ pure []
+
+
+
+
+-- type FT f m a = forall r. (a -> m r) -> (forall x. (x -> m r) -> f x -> m r) -> m r
+
 --  The Rule Monad which we use to perform
 -- data Rule m a where
   -- LookupVar :: (Typeable t)
