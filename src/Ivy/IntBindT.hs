@@ -326,7 +326,18 @@ instance (Monad m) => Monad (RuleT m) where
 
 -- | Pull out one layer of the rule as an action we can run.
 evalRule :: RuleIB m a -> RTIB m [RuleIB m a]
-evalRule = undefined
+evalRule (RLook t v k) = do
+  addToWatched v
+  addToHistory Lookup v
+  lookupVar (force v) >>= _ k
+
+evalRule (RBind t v a k) = do
+  addToModified v
+  addToHistory Bind v
+  a v >>= (map force . lift . bindVar (force v)) >>= _ k
+
+evalRule (RLift as) = as
+evalRule (RPure _) = pure []
 
 instance (MonadError e m) => MonadError e (RuleT m) where
   throwError = undefined
