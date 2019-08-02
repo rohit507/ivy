@@ -142,6 +142,9 @@ data Assumptions = Assumptions
   , _subsumptions :: HashMap UnivID (HashSet UnivID)
   }
 
+emptyAssumptions :: Assumptions
+emptyAssumptions = Assumptions P.empty P.empty mempty
+
 data Term t
 newtype TMap = TMap { getTMap :: forall t. Typeable t => TermMap t }
 
@@ -249,13 +252,16 @@ data RuleMeta = RuleMeta
   , _assumptions :: Assumptions
   }
 
+newRuleMeta :: RuleID -> RuleMeta
+newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty emptyAssumptions
+
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
 type RT m = StateT RuleMeta m
 type RTIB m = RT (IntBindT m)
 
-type RuleIB m = RuleT (IntBindT m)
+type RuleIB m = Rule (IntBindT m)
 
 -- | Rules let us describe invariants over a term map as actions that
 --   can be run repeatedly/incrementally executed. In general they only
@@ -264,22 +270,29 @@ type RuleIB m = RuleT (IntBindT m)
 --
 --   Despite the T suffix this isn't actually (yet) a monad transformer.
 --   It mostly exists to
+--
+--   FIXME :: This looks suspiciously like some conbination of a
+--            continuation monad and a free monad. See if there's
+--            someway to refactor into those.
 data RuleT m a where
-  RLook :: (MonadBind e t m)
+  RLook :: (MonadBind e m t)
     => { _type :: TypeRep t
        , _var :: TermID t
-       , _process :: Maybe (t (TermID t)) -> RT m a
+       , _process :: Maybe (t (TermID t)) -> RT m (RuleT m a)
        } -> RuleT m a
 
-  RBind :: (MonadBind e t m)
+  RBind :: (MonadBind e m t)
     => { _type :: TypeRep t
        , _var :: TermID t
        , _term :: TermID t -> RT m (t (TermID t))
-       , _continue :: TermID t -> RT m a
+       , _continue :: TermID t -> RT m (RuleT m a)
        } -> RuleT m a
 
-  RRun :: ()
-    => { _actions :: [RT m a]
+  RLift :: ()
+    => { _action :: RT m [RuleT m a] } -> RuleT m a
+
+  RPure :: ()
+    => { _actions :: a
        } -> RuleT m a
 
 

@@ -78,7 +78,7 @@ class ( Typeable t
 --   between terms.
 class (Typeable p) => Property p t t' | p -> t, p -> t'
 
-class (Typeable p) => MonadProperty e p m where
+class (Typeable p, Monad m) => MonadProperty e p m where
 
   -- | This will get the property related to the input term, generating a
   --   free term if it does not already exist.
@@ -86,7 +86,7 @@ class (Typeable p) => MonadProperty e p m where
   --   Properties are many-to-one relationships between terms. For instance
   --   many terms can have the same type, but no term can have multiple
   --   types.
-  propertyOf :: (MonadBind e m t, MonadBind e m t', Property p t t')
+  propertyOf :: forall t t'. (MonadBind e m t, MonadBind e m t', Property p t t')
       => p -> Var m t -> m (Var m t')
 
 
