@@ -19,7 +19,9 @@ import qualified Data.Text as Text
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 
+
 import Data.Monoid (All, getAll)
+
 
 -- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It
@@ -56,6 +58,8 @@ class ( Typeable t
       , Monad m
       , Hashable (Var m t)
       , Eq (Var m t)
+      , Eq1 t
+      , JoinSemiLattice1 e t
       , MonadError e m)
     => MonadBind (e :: Type) m t | m -> e where
 
@@ -78,7 +82,7 @@ class ( Typeable t
 --   between terms.
 class (Typeable p) => Property p t t' | p -> t, p -> t'
 
-class (Typeable p, Monad m) => MonadProperty e p m where
+class (Typeable p, Monad m) => MonadProperty e p m | m -> e where
 
   -- | This will get the property related to the input term, generating a
   --   free term if it does not already exist.
@@ -90,7 +94,7 @@ class (Typeable p, Monad m) => MonadProperty e p m where
       => p -> Var m t -> m (Var m t')
 
 
-class (MonadBind e m t) => MonadUnify e m t where
+class (MonadBind e m t) => MonadUnify e m t | m -> e where
 
   -- | Check whether two terms are equal. i.e That they could be unified without
   --   an error.
@@ -120,7 +124,7 @@ class (MonadBind e m t) => MonadUnify e m t where
 -- | This class is only relevant to implementers of a MonadProperty.
 --   Basically, it gives us a way to traverse each of the potential
 --   property pairs for some term, and appropriately handle them.
-class MonadProperties e m where
+class (MonadError e m) => MonadProperties e m where
 
   getPropertyPairs :: forall a t. (MonadBind e m t)
       => (forall t' p proxy. ( MonadProperty e p m
@@ -136,7 +140,7 @@ class MonadProperties e m where
 --
 --   This basically makes it easier to handle coinductive reasoning about
 --   equality, unity, and subsumption.
-class (MonadUnify e m t) => MonadAssume e m t where
+class (MonadUnify e m t) => MonadAssume e m t | m -> e where
 
   -- | Are the two terms equal
   isAssumedEqual :: Var m t -> Var m t -> m Bool
@@ -159,21 +163,21 @@ class (MonadUnify e m t) => MonadAssume e m t where
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
-class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
-      , forall t. (MonadUnify e m t) => MonadUnify e (Rule m) t
-      , forall t. (MonadAssume e m t) => MonadAssume e (Rule m) t
-      , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
-      , Var m ~ Var (Rule m)
-      , Rule (Rule m) ~ (Rule m)
+class ( forall t. (MonadBind e m t) => MonadBind e (Rule e m) t
+      , forall t. (MonadUnify e m t) => MonadUnify e (Rule e m) t
+      , forall t. (MonadAssume e m t) => MonadAssume e (Rule e m) t
+      , forall p. (MonadProperty e p m) => MonadProperty e p (Rule e m)
+      , Var m ~ Var (Rule e m)
+      , Rule e (Rule e m) ~ (Rule e m)
       ) => MonadRule e m | m -> e where
 
-  type Rule m :: Type -> Type
+  type Rule (e :: Type) m :: Type -> Type
 
   -- | Default implementation exists for r ~ m, where addRule is just identity.
   --   since any recursively defined rules should just become a single
   --   larger rule.
-  addRule :: Rule m () -> m ()
-  default addRule :: (Rule m ~ m) => Rule m () -> m ()
+  addRule :: Rule e m () -> m ()
+  default addRule :: (Rule e m ~ m) => Rule e m () -> m ()
   addRule = id
 
 
@@ -184,6 +188,7 @@ data BinOpContext a b e m t = BinOpContext
   , traversing :: forall c. (c -> m a) -> t c -> m b
   , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
   }
+
 
 {-
 recBinOpF :: forall a b e m t. (MonadBind e m t, JoinSemiLattice1 e t)

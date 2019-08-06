@@ -40,6 +40,10 @@ import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
 import Data.These as P hiding (swap)
 
+-- import Data.Constraint ((:-), Dict)
+-- import qualified Data.Constraint as Constraint
+-- import qualified Data.Constraint.Unsafe as Unsafe
+
 
 whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
 whenJust Nothing _ = skip
@@ -99,7 +103,16 @@ matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
 matchType2 tt errt tm errm succ =
   matchType @t tt errt
     (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
+
 {-
+class Foo e m | m -> e
+
+data Bar m where
+  Bar :: (Foo e m) => (e -> m ()) -> Bar m
+
+buzz :: (Foo e m) => Bar m -> e -> m ()
+buzz (Bar f) = f
+
 import Data.Functor as B
 
 -- | This is a pair type meant mainly for syntax sugar, `key := val` is to be

@@ -46,6 +46,12 @@ deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
 deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
 
+monadErrEq :: forall m e. (Typeable e, MonadError e m)
+  => (forall e'. (Typeable e', MonadError e' m) => e :~~: e')
+monadErrEq = case eqTypeRep (typeRep @e) typeRep of
+  Nothing -> panic "Functional dependency should ensure this is impossible"
+  Just g -> g
+
 instance MonadTrans IntBindT where
   lift = IntBindT . lift
 
@@ -246,7 +252,6 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (That v)
 
-
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadUnify e (IntBindT m) t
 
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
@@ -308,80 +313,95 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssumption a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => TermID t -> TermID t -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssumption a b) m
 
-instance Functor m => Functor (RuleT m) where
+instance Functor m => Functor (RuleT e m) where
   fmap f (RLook t v k) = RLook t v (\ mt -> map f <$> k mt)
   fmap f (RBind t v a k) = RBind t v a (\ nv -> map f <$> k nv)
   fmap f (RLift as) = RLift $ map (map f) <$> as
   fmap f (RPure a)  = RPure $ f a
 
-instance (Monad m) => Applicative (RuleT m) where
+instance (Monad m) => Applicative (RuleT e m) where
   pure a = RPure a
   (<*>) = ap
 
-instance (Monad m) => Monad (RuleT m) where
+instance (Monad m) => Monad (RuleT e m) where
   RLook t v   k >>= f = RLook t v   (\ mt -> (>>= f) <$> k mt)
   RBind t v a k >>= f = RBind t v a (\ nt -> (>>= f) <$> k nt)
   RLift as      >>= f = RLift $ map (>>= f) <$> as
   RPure a       >>= f = f a
 
--- | Pull out one layer of the rule as an action we can run.
-evalRule :: RuleIB m a -> RTIB m [RuleIB m a]
+
+-- | Pull out one layer of the rule as an action we can run, recurse on
+--   lift operations.
+evalRule :: forall a e m. (BSEMC e m) => RuleIB e m a -> RTIB e m [RuleIB e m a]
 evalRule (RLook t v k) = do
-  addToWatched v
-  addToHistory Lookup v
-  lookupVar (force v) >>= _ k
+    addToWatched v
+    addToHistory Lookup v
+    map (map force) <$> lift (lookupVar $ force v) >>= (map pure . k)
 
 evalRule (RBind t v a k) = do
   addToModified v
   addToHistory Bind v
-  a v >>= (map force . lift . bindVar (force v)) >>= _ k
+  term <- a v
+  res :: TermID t <- force <$> (lift $ bindVar (force v) (map force term))
+  pure <$> k res
 
-evalRule (RLift as) = as
+evalRule (RLift as) = map mconcat . traverse evalRule =<< as
+
 evalRule (RPure _) = pure []
 
-instance (MonadError e m) => MonadError e (RuleT m) where
-  throwError = undefined
-  catchError = undefined
+instance forall e m. (MonadError e m) => MonadError e (RuleT e m) where
+  throwError = lift . throwError
 
-instance MonadTrans RuleT where
+  catchError :: forall a. RuleT m a -> (e -> RuleT m a) -> RuleT m a
+  catchError = undefined
+  -- catchError (RLook t v k) a = RLook t v (\ mt -> catchError @e (k mt)
+  --                                         (pure . a :: e -> RT e m (RuleT m a)))
+
+instance MonadTrans (RuleT e) where
+  lift :: (Monad m) => m a -> RuleT e m a
   lift = RLift . map (pure . RPure) . lift
 
-instance (MonadBind e m t) => MonadBind e (RuleT m) t where
+instance (MonadBind e m t) => MonadBind e (RuleT e m) t where
 
-  type Var (RuleT m) = Var m
+  type Var (RuleT e m) = Var m
 
   freeVar = undefined
   bindVar = undefined
   lookupVar = undefined
   redirectVar = undefined
 
-instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (RuleT m) t
+instance (MonadRule e m, Rule e m ~ RuleT e m, MonadAssume e m t)
+    => MonadUnify e (RuleT e m) t where
+  unify = undefined
+  equals = undefined
+  subsume = undefined
 
-instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadAssume e (RuleT m) t where
+instance (MonadRule e m, Rule e m ~ RuleT e m, MonadAssume e m t)
+  => MonadAssume e (RuleT e m) t where
 
-  isAssumedEqual :: Var m t -> Var m t -> RuleT m Bool
+  isAssumedEqual :: Var m t -> Var m t -> RuleT e m Bool
   isAssumedEqual = undefined
 
-  assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
+  assumeEqual :: Var m t -> Var m t -> RuleT e m a -> RuleT e m a
   assumeEqual = undefined
 
-  isAssumedUnified :: Var m t -> Var m t -> RuleT m Bool
+  isAssumedUnified :: Var m t -> Var m t -> RuleT e m Bool
   isAssumedUnified = undefined
 
-  assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
+  assumeUnified :: Var m t -> Var m t -> RuleT e m a -> RuleT e m a
   assumeUnified = undefined
 
-  isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
+  isAssumedSubsumed :: Var m t -> Var m t -> RuleT e m Bool
   isAssumedSubsumed = undefined
 
-  assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
+  assumeSubsumed :: Var m t -> Var m t -> RuleT e m a -> RuleT e m a
   assumeSubsumed = undefined
 
 instance ( MonadRule e m
-         , forall t. (MonadBind e (Rule m) t) => MonadBind e m t
-         , Rule m ~ RuleT m
+         , forall t. (MonadBind e (Rule e m) t) => MonadBind e m t
+         , Rule e m ~ RuleT e m
          , MonadProperty e p m
-         , Var m ~ Var (RuleT m)) => MonadProperty e p (RuleT m) where
+         , Var m ~ Var (RuleT e m)) => MonadProperty e p (RuleT e m) where
 
   propertyOf :: forall t t'. (MonadBind e (RuleT m) t, MonadBind e (RuleT m) t', Property p t t')
      => p -> Var (RuleT m) t -> RuleT m (Var (RuleT m) t')
@@ -392,18 +412,18 @@ instance ( Typeable e
          , MonadError e m)
   => MonadRule e (IntBindT m) where
 
-  type Rule (IntBindT m) = RuleT (IntBindT m)
+  type Rule e (IntBindT m) = RuleT e (IntBindT m)
 
   addRule r = IntBindT $
     (newRuleMeta <$> newIdent)
       >>= insertRule r
       >>= triggerRule
 
-instance (Monad m) => MonadFail (RuleT m) where
+instance (Monad m) => MonadFail (RuleT e m) where
   fail _ = RLift $ pure []
 
-instance (MonadError e m) => MonadRule e (RuleT m) where
-  type Rule (RuleT m) = RuleT m
+instance (MonadError e m) => MonadRule e (RuleT e m) where
+  type Rule e (RuleT e m) = RuleT e m
   addRule = id
 
 newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
@@ -503,13 +523,13 @@ hasSubAssumption = undefined
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule
 runRule :: ()
-  => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
+  => RuleMeta -> RuleIB e m () -> BSM m [(RuleMeta, RuleIB e m ())]
 runRule = undefined
 
-insertRule :: RuleIB m () -> RuleMeta -> BSM m RuleID
+insertRule :: RuleIB e m () -> RuleMeta -> BSM m RuleID
 insertRule = undefined
 
-lookupRule :: RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
+lookupRule :: RuleID -> BSM m (Maybe (RuleMeta, RuleIB e m ()))
 lookupRule = undefined
 
 lookupRuleHistory :: RuleHistory -> BSM m (Maybe RuleID)
@@ -518,11 +538,11 @@ lookupRuleHistory = undefined
 triggerRule :: RuleID -> BSM m ()
 triggerRule = undefined
 
-addToWatched :: TermID t -> RTIB m ()
+addToWatched :: TermID t -> RTIB e m ()
 addToWatched = undefined
 
-addToModified :: TermID t -> RTIB m ()
+addToModified :: TermID t -> RTIB e m ()
 addToModified = undefined
 
-addToHistory :: (Newtype n Int) => RuleAction -> n -> RTIB m ()
+addToHistory :: (Newtype n Int) => RuleAction -> n -> RTIB e m ()
 addToHistory = undefined

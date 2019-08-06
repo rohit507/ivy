@@ -185,7 +185,7 @@ data DefaultRule (t :: Type -> Type) where
   DefaultRule :: (MonadRule e m, MonadBind e t m)
               => TypeRep e
               -> TypeRep m
-              -> (Var m t -> Rule m ())
+              -> (Var m t -> Rule e m ())
               -> DefaultRule t
 
 data RMap
@@ -230,7 +230,7 @@ data BoundState t = BoundState
 data RuleState where
   Merged :: RuleID -> RuleState
   Waiting :: (Typeable m)
-    => TypeRep m -> RuleMeta -> Rule m () -> RuleState
+    => TypeRep m -> RuleMeta -> Rule e m () -> RuleState
 
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
@@ -258,10 +258,18 @@ newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty emptyAssumptions
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
 
-type RT m = StateT RuleMeta m
-type RTIB m = RT (IntBindT m)
+newtype RT e m a = RT { getRT :: StateT RuleMeta (ExceptT e m) a }
 
-type RuleIB m = Rule (IntBindT m)
+deriving newtype instance (Functor m) => Functor (RT e m)
+deriving newtype instance (Monad m) => Applicative (RT e m)
+deriving newtype instance (Monad m) => Monad (RT e m)
+deriving newtype instance (MonadError e m) => MonadError e (RT e m)
+instance MonadTrans (RT e) where
+  lift = RT . lift . lift
+
+type RTIB e m = RT e (IntBindT m)
+
+type RuleIB e m = Rule e (IntBindT m)
 
 -- | Rules let us describe invariants over a term map as actions that
 --   can be run repeatedly/incrementally executed. In general they only
@@ -274,26 +282,26 @@ type RuleIB m = Rule (IntBindT m)
 --   FIXME :: This looks suspiciously like some conbination of a
 --            continuation monad and a free monad. See if there's
 --            someway to refactor into those.
-data RuleT m a where
+data RuleT e m a where
   RLook :: (MonadBind e m t)
     => { _type :: TypeRep t
        , _var :: TermID t
-       , _process :: Maybe (t (TermID t)) -> RT m (RuleT m a)
-       } -> RuleT m a
+       , _process :: Maybe (t (TermID t)) -> RT e m (RuleT e m a)
+       } -> RuleT e m a
 
   RBind :: (MonadBind e m t)
     => { _type :: TypeRep t
        , _var :: TermID t
-       , _term :: TermID t -> RT m (t (TermID t))
-       , _continue :: TermID t -> RT m (RuleT m a)
-       } -> RuleT m a
+       , _term :: TermID t -> RT e m (t (TermID t))
+       , _continue :: TermID t -> RT e m (RuleT e m a)
+       } -> RuleT e m a
 
   RLift :: ()
-    => { _action :: RT m [RuleT m a] } -> RuleT m a
+    => { _action ::  RT e m [RuleT e m a] } -> RuleT e m a
 
   RPure :: ()
     => { _actions :: a
-       } -> RuleT m a
+       } -> RuleT e m a
 
 
 makeFieldsNoPrefix ''Context
@@ -302,7 +310,7 @@ makeFieldsNoPrefix ''Assumptions
 makeFieldsNoPrefix ''BindingState
 makeFieldsNoPrefix ''RuleState
 makeFieldsNoPrefix ''BoundState
-makePrisms ''RuleState
+-- makePrisms ''RuleState
 
 class HasTerms s a where
   terms :: Lens' s a
