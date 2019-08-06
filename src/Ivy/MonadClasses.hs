@@ -18,6 +18,7 @@ import Algebra.Lattice
 import qualified Data.Text as Text
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
+import Ivy.Assertions
 
 import Data.Monoid (All, getAll)
 
@@ -55,8 +56,7 @@ class ( Typeable t
       , Traversable t
       , Monad m
       , Hashable (Var m t)
-      , Eq (Var m t)
-      , Newtype (Var m t) Int
+      , Ord (Var m t)
       , MonadError e m)
     => MonadBind (e :: Type) m t | m -> e where
 
@@ -148,24 +148,39 @@ class MonadProperties e m where
 --   equality, unity, and subsumption.
 class (MonadUnify e m t) => MonadAssume e m t where
 
-  -- | Are the two terms equal
-  isAssumedEqual :: Var m t -> Var m t -> m Bool
+  -- | Assertions that we assume to be true for the moment.
+  getAssumptions :: m (Assertions Int)
+
+  -- | Assertions that are true
+  getAssertions :: m (Assertions Int)
 
   -- | Within the passed action assume the two variables are equivalent.
   assumeEqual :: Var m t -> Var m t -> m a -> m a
 
-  -- | Variable equality that is aware of assumptions
-  isAssumedUnified :: Var m t -> Var m t -> m Bool
-
   -- | Within the passed action assume the two variables are unified.
   assumeUnified :: Var m t -> Var m t -> m a -> m a
-
-  -- | Single layer term subsumption, that is aware of assumptions
-  isAssumedSubsumed :: Var m t -> Var m t -> m Bool
 
   -- | Within the passed action assume that the first variable subsumes the
   --   second. .
   assumeSubsumed :: Var m t -> Var m t -> m a -> m a
+
+  -- | set global state
+  assertEqual :: Var m t -> Var m t -> m a
+  assertUnified :: Var m t -> Var m t -> m a
+  assertSubsumed :: Var m t -> Var m t -> m a
+
+
+-- | Single layer term subsumption, that is aware of assumptions
+isAssumedSubsumed :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
+isAssumedSubsumed a b = assertedSubsumed a b <$> getAssumptions
+
+-- | Variable equality that is aware of assumptions
+isAssumedUnified :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
+isAssumedUnified a b = assertedUnified a b <$> getAssumptions
+
+-- | Are the two terms equal
+isAssumedEqual :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
+isAssumedEqual a b = assertedUnified a b <$> getAssumptions
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.

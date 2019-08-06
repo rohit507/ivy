@@ -271,15 +271,15 @@ type RuleIB m = Rule (IntBindT m)
 data RuleT m a where
   RLook :: (MonadBind e m t)
     => { _type :: TypeRep t
-       , _var :: TermID t
-       , _process :: Maybe (t (TermID t)) -> RT m (RuleT m a)
+       , _var :: Var m t
+       , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
        } -> RuleT m a
 
   RBind :: (MonadBind e m t)
     => { _type :: TypeRep t
-       , _var :: TermID t
-       , _term :: t (TermID t)
-       , _continue :: TermID t -> RT m (RuleT m a)
+       , _var :: Var m t
+       , _term :: t (Var m t)
+       , _continue :: Var m t -> RT m (RuleT m a)
        } -> RuleT m a
 
   RLift :: ()

@@ -253,23 +253,15 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadUnify e (IntBindT m)
 
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
 
-  isAssumedEqual :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedEqual a b = IntBindT $ isAssumedEqualS @e @_ @t (force a) (force b)
-
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
   assumeEqual a b m = IntBindT $ assumeEqualS @m @t (force a) (force b) (getIntBindT m)
-
-  isAssumedUnified :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedUnified a b = IntBindT $ isAssumedUnifiedS (force a) (force b)
 
   assumeUnified :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
   assumeUnified a b m = IntBindT $ assumeUnifiedS (force a) (force b) (getIntBindT m)
 
-  isAssumedSubsumed :: VarIB m t -> VarIB m t -> IntBindT m Bool
-  isAssumedSubsumed a b = IntBindT $ isAssumedSubsumedS (force a) (force b)
-
   assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
   assumeSubsumed a b m = IntBindT $ assumeSubsumedS (force a) (force b) (getIntBindT m)
+
 
 isAssumedEqualS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m Bool
 isAssumedEqualS a b = do
@@ -375,24 +367,13 @@ instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (R
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadAssume e (RuleT m) t where
 
-  isAssumedEqual :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedEqual a b = RLift $ do
-    a' <- P.rep <$> (use $ assumptions @RuleMeta . equalities) <*> pure (force a :: UnivID)
-    b' <- P.rep <$> (use $ assumptions @RuleMeta . equalities) <*> pure (force b :: UnivID)
-    pure . (:[]) $ do
-      pure (a' == b') ||^ (lift $ isAssumedEqual @_ @_ @t (force a') (force b'))
+
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeEqual = undefined
 
-  isAssumedUnified :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedUnified = undefined
-
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeUnified = undefined
-
-  isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedSubsumed = undefined
 
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeSubsumed = undefined
@@ -517,24 +498,24 @@ getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
 addEqAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assumptions -> Assumptions
+  => TermID t -> TermID t -> Assertions (TermID t) -> Assertions (TermID t)
 addEqAssumption = undefined
 
-hasEqAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasEqAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
 hasEqAssumption = undefined
 
 addUniAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assumptions ->  Assumptions
+  => TermID t -> TermID t -> Assertions (TermID t) ->  Assertions (TermID t)
 addUniAssumption = undefined
 
-hasUniAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasUniAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
 hasUniAssumption = undefined
 
 addSubAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assumptions -> Assumptions
+  => TermID t -> TermID t -> Assertions (TermID t) -> Assertions (TermID t)
 addSubAssumption = undefined
 
-hasSubAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
+hasSubAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
 hasSubAssumption = undefined
 
 -- | given an initial rule, run a single step and return all the (potentially
