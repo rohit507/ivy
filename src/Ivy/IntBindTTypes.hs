@@ -19,6 +19,7 @@ import Ivy.Prelude hiding (IntSet, IntMap)
 
 import Algebra.Lattice
 import Ivy.MonadClasses
+import Ivy.Assertions
 
 import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
 import qualified Data.TypeMap.Dynamic as TM
@@ -43,8 +44,8 @@ type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e)
 type BSMC m = (Monad m)
-type BSTC t = (Traversable t, Typeable t, Eq1 t)
-type BSMTC m t = (BSMC m, BSTC t)
+type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
+type BSMTC m t = (BSMC m, BSTC t, Newtype (Var m t) Int)
 type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
 type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
 type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
@@ -129,21 +130,13 @@ instance (BSTC t) => ToExID (TermID t) where
 
 data Context = Context
   { _config  :: Config
-  , _assumptions :: Assumptions
+  -- | Things we assume are true
+  , _assumptions :: Assertions UnivID
   }
 
 data Config = Config
   {
   }
-
-data Assumptions = Assumptions
-  { _equalities   :: Partition UnivID
-  , _unifications :: Partition UnivID
-  , _subsumptions :: HashMap UnivID (HashSet UnivID)
-  }
-
-emptyAssumptions :: Assumptions
-emptyAssumptions = Assumptions P.empty P.empty mempty
 
 data Term t
 newtype TMap = TMap { getTMap :: forall t. Typeable t => TermMap t }
@@ -201,6 +194,7 @@ data BindingState = BindingState
   , _dependencies  :: AdjacencyMap ExID
   , _ruleHistories :: HashMap RuleID RuleHistories
   , _defaultRule   :: RuleMap
+  , _assertions    :: Assertions UnivID
   }
 
 data TermState t where
@@ -246,14 +240,14 @@ data RuleHistory = RuleHistory
   deriving (Eq, Ord, Show)
 
 data RuleMeta = RuleMeta
-  { _history :: RuleHistory
-  , _watched :: HashSet UnivID
-  , _modified :: HashSet UnivID
-  , _assumptions :: Assumptions
+  { _history    :: RuleHistory
+  , _watched    :: HashSet UnivID
+  , _modified   :: HashSet UnivID
+  , _assertions :: Assertions UnivID
   }
 
 newRuleMeta :: RuleID -> RuleMeta
-newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty emptyAssumptions
+newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty mempty
 
 data RuleAction = Lookup | Bind
   deriving (Eq, Ord, Show)
@@ -298,10 +292,10 @@ data RuleT m a where
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config
-makeFieldsNoPrefix ''Assumptions
 makeFieldsNoPrefix ''BindingState
 makeFieldsNoPrefix ''RuleState
 makeFieldsNoPrefix ''BoundState
+makeFieldsNoPrefix ''RuleMeta
 -- makePrisms ''RuleState
 
 class HasTerms s a where
@@ -311,8 +305,8 @@ instance (Typeable a) => HasTerms BindingState (TermMap a) where
   terms = (terms_ :: Lens' BindingState TMap)
         . (iso getTMap forceTMap)
 
-instance HasAssumptions Assumptions Assumptions where
-  assumptions = id
+instance HasAssertions (Assertions a) (Assertions a) where
+  assertions = id
 
 instance Monoid w => MonadTransControl (RWST r w s) where
    type StT (RWST r w s) a = (a, s, w)

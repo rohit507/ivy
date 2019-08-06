@@ -21,7 +21,7 @@ import Ivy.Prelude hiding (IntSet, IntMap)
 import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.IntBindTTypes
-
+import Ivy.Assertions
 
 import Data.Bimap (Bimap)
 import qualified Data.Bimap as BM
@@ -35,6 +35,8 @@ import qualified GHC.Base (Functor, fmap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 
+import Data.Partition (Partition)
+import qualified Data.Partition as P
 
 import qualified Control.Monad.Fail (fail)
 import Control.Monad (ap)
@@ -255,7 +257,7 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
   isAssumedEqual a b = IntBindT $ isAssumedEqualS @e @_ @t (force a) (force b)
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeEqual a b m = IntBindT $ assumeEqualS (force a) (force b) (getIntBindT m)
+  assumeEqual a b m = IntBindT $ assumeEqualS @m @t (force a) (force b) (getIntBindT m)
 
   isAssumedUnified :: VarIB m t -> VarIB m t -> IntBindT m Bool
   isAssumedUnified a b = IntBindT $ isAssumedUnifiedS (force a) (force b)
@@ -360,29 +362,25 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   type Var (RuleT m) = Var m
 
-  freeVar = undefined
-  bindVar = undefined
-  lookupVar = undefined
-  redirectVar = undefined
+  freeVar = lift freeVar
 
-freeVarR :: RuleT m (TermID t)
-freeVarR = undefined
+  bindVar a b = force <$> RBind typeRep (force a) (map force b) (pure . pure)
 
-bindVarR :: TermID t -> t (TermID t) -> RuleT m (Maybe (TermID t))
-bindVarR = undefined
+  lookupVar a = map (map force) <$> RLook typeRep (force a) (pure . pure)
 
-lookupVarR :: TermID t -> RuleT m (Maybe (t (TermID t)))
-lookupVarR = undefined
+  redirectVar a b = lift $ redirectVar a b
 
-redirectVarR :: TermID t -> TermID t -> RuleT m (TermID t)
-redirectVarR = undefined
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (RuleT m) t
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadAssume e (RuleT m) t where
 
   isAssumedEqual :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedEqual = undefined
+  isAssumedEqual a b = RLift $ do
+    a' <- P.rep <$> (use $ assumptions @RuleMeta . equalities) <*> pure (force a :: UnivID)
+    b' <- P.rep <$> (use $ assumptions @RuleMeta . equalities) <*> pure (force b :: UnivID)
+    pure . (:[]) $ do
+      pure (a' == b') ||^ (lift $ isAssumedEqual @_ @_ @t (force a') (force b'))
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeEqual = undefined

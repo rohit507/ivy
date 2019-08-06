@@ -56,6 +56,7 @@ class ( Typeable t
       , Monad m
       , Hashable (Var m t)
       , Eq (Var m t)
+      , Newtype (Var m t) Int
       , MonadError e m)
     => MonadBind (e :: Type) m t | m -> e where
 
@@ -73,6 +74,15 @@ class ( Typeable t
   -- | Deletes the contents of the first variable, and makes all references to
   --   it instead point to second variable.
   redirectVar :: Var m t -> Var m t -> m (Var m t)
+
+  -- | Does not modify the state of m at all, but returns the most up to date
+  --   variable that is equivalent to the input.
+  --
+  --   Forall a b in Var m t
+  --      unified a b === (==) <$> freshenVar a <*> freshenVar b
+  --
+  --   after two calls to freshen var, two terms should be unified only if they're
+  freshenVar :: Var m t -> m (Var m t)
 
 -- | Properties are singleton types which reference some functional relation
 --   between terms.
