@@ -169,7 +169,7 @@ class (MonadUnify e m t) => MonadAssume e m t where
   assertUnified :: Var m t -> Var m t -> m a
   assertSubsumed :: Var m t -> Var m t -> m a
 
-
+{-
 -- | Single layer term subsumption, that is aware of assumptions
 isAssumedSubsumed :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
 isAssumedSubsumed a b = assertedSubsumed a b <$> getAssumptions
@@ -181,7 +181,7 @@ isAssumedUnified a b = assertedUnified a b <$> getAssumptions
 -- | Are the two terms equal
 isAssumedEqual :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
 isAssumedEqual a b = assertedUnified a b <$> getAssumptions
-
+-}
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
 class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
