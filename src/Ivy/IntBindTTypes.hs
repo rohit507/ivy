@@ -284,7 +284,7 @@ data RuleT m a where
   RBind :: (MonadBind e m t)
     => { _type :: TypeRep t
        , _var :: TermID t
-       , _term :: TermID t -> RT m (t (TermID t))
+       , _term :: t (TermID t)
        , _continue :: TermID t -> RT m (RuleT m a)
        } -> RuleT m a
 
@@ -302,7 +302,7 @@ makeFieldsNoPrefix ''Assumptions
 makeFieldsNoPrefix ''BindingState
 makeFieldsNoPrefix ''RuleState
 makeFieldsNoPrefix ''BoundState
-makePrisms ''RuleState
+-- makePrisms ''RuleState
 
 class HasTerms s a where
   terms :: Lens' s a

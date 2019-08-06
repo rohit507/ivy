@@ -324,24 +324,34 @@ instance (Monad m) => Monad (RuleT m) where
   RLift as      >>= f = RLift $ map (>>= f) <$> as
   RPure a       >>= f = f a
 
--- | Pull out one layer of the rule as an action we can run.
-evalRule :: RuleIB m a -> RTIB m [RuleIB m a]
+-- | Pull out one layer of the rule as an action we can run, recurse on
+--   lift operations.
+evalRule :: forall a m. (Monad m) => RuleIB m a -> RTIB m [RuleIB m a]
 evalRule (RLook t v k) = do
-  addToWatched v
-  addToHistory Lookup v
-  lookupVar (force v) >>= _ k
+    addToWatched v
+    addToHistory Lookup v
+    map (map force) <$> lift (lookupVar $ force v) >>= (map pure . k)
 
 evalRule (RBind t v a k) = do
   addToModified v
   addToHistory Bind v
-  a v >>= (map force . lift . bindVar (force v)) >>= _ k
+  res :: TermID t <- force <$> (lift $ bindVar (force v) (map force a))
+  pure <$> k res
 
-evalRule (RLift as) = as
+evalRule (RLift as) = map mconcat . traverse evalRule =<< as
+
 evalRule (RPure _) = pure []
 
+-- | FIXME :: `catchError` does nothing in the current instance, since
+--            it requires us to be able to unify the inner and outer error type.
 instance (MonadError e m) => MonadError e (RuleT m) where
-  throwError = undefined
-  catchError = undefined
+  throwError = lift . throwError
+
+  catchError m _ = m
+  -- catchError (RLook t v k) r   = RLook t v (\ mt -> catchError (k mt) (pure . r))
+  -- catchError (RBind t v a k) r = RBind t v a (\ nt -> catchError (k nt) (pure . r))
+  -- catchError (RLift as) r      = RLift $ map (\ a -> catchError a r) <$> as
+
 
 instance MonadTrans RuleT where
   lift = RLift . map (pure . RPure) . lift
@@ -354,6 +364,18 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
   bindVar = undefined
   lookupVar = undefined
   redirectVar = undefined
+
+freeVarR :: RuleT m (TermID t)
+freeVarR = undefined
+
+bindVarR :: TermID t -> t (TermID t) -> RuleT m (Maybe (TermID t))
+bindVarR = undefined
+
+lookupVarR :: TermID t -> RuleT m (Maybe (t (TermID t)))
+lookupVarR = undefined
+
+redirectVarR :: TermID t -> TermID t -> RuleT m (TermID t)
+redirectVarR = undefined
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (RuleT m) t
 
@@ -376,6 +398,24 @@ instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadAssume e (
 
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeSubsumed = undefined
+
+isAssumedEqualR :: TermID t -> TermID t -> RuleT m Bool
+isAssumedEqualR = undefined
+
+assumeEqualR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
+assumeEqualR = undefined
+
+isAssumedUnifiedR :: TermID t -> TermID t -> RuleT m Bool
+isAssumedUnifiedR = undefined
+
+assumeUnifiedR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
+assumeUnifiedR = undefined
+
+isAssumedSubsumedR :: TermID t -> TermID t -> RuleT m Bool
+isAssumedSubsumedR = undefined
+
+assumeSubsumedR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
+assumeSubsumedR = undefined
 
 instance ( MonadRule e m
          , forall t. (MonadBind e (Rule m) t) => MonadBind e m t
@@ -498,7 +538,6 @@ addSubAssumption = undefined
 
 hasSubAssumption :: TermID t -> TermID t -> Assumptions -> BSM m Bool
 hasSubAssumption = undefined
-
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule
