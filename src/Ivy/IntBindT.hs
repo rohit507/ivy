@@ -324,12 +324,12 @@ evalRule :: forall a m. (Monad m) => RuleIB m a -> RTIB m [RuleIB m a]
 evalRule (RLook t v k) = do
     addToWatched v
     addToHistory Lookup v
-    map (map force) <$> lift (lookupVar $ force v) >>= (map pure . k)
+    lift (lookupVar v) >>= (map pure . k)
 
 evalRule (RBind t v a k) = do
   addToModified v
   addToHistory Bind v
-  res :: TermID t <- force <$> (lift $ bindVar (force v) (map force a))
+  res <- lift $ bindVar v a
   pure <$> k res
 
 evalRule (RLift as) = map mconcat . traverse evalRule =<< as
@@ -356,18 +356,15 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   freeVar = lift freeVar
 
-  bindVar a b = force <$> RBind typeRep (force a) (map force b) (pure . pure)
+  bindVar a b = RBind typeRep a b (pure . pure)
 
-  lookupVar a = map (map force) <$> RLook typeRep (force a) (pure . pure)
+  lookupVar a = RLook typeRep a (pure . pure)
 
   redirectVar a b = lift $ redirectVar a b
-
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (RuleT m) t
 
 instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadAssume e (RuleT m) t where
-
-
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeEqual = undefined

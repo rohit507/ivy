@@ -87,9 +87,6 @@ instance Newtype RuleID Int where
   pack = RuleID
   unpack = getRuleID
 
-force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
-force = pack . unpack
-
 forceTID :: VarID m t -> TermID t
 forceTID = force
 

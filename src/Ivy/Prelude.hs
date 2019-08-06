@@ -90,6 +90,9 @@ matchType tr err succ = fromMaybe err $ do
   h <- eqTypeRep (typeRep @t) tr
   pure $ succ h
 
+force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
+force = pack . unpack
+
 -- | Matches a pair of types instead of just one.
 matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
            => TypeRep t' -> a
