@@ -148,11 +148,6 @@ class MonadProperties e m where
 --   equality, unity, and subsumption.
 class (MonadUnify e m t) => MonadAssume e m t where
 
-  -- | Assertions that we assume to be true for the moment.
-  getAssumptions :: m (Assertions Int)
-
-  -- | Assertions that are true
-  getAssertions :: m (Assertions Int)
 
   -- | Within the passed action assume the two variables are equivalent.
   assumeEqual :: Var m t -> Var m t -> m a -> m a
@@ -165,9 +160,13 @@ class (MonadUnify e m t) => MonadAssume e m t where
   assumeSubsumed :: Var m t -> Var m t -> m a -> m a
 
   -- | set global state
-  assertEqual :: Var m t -> Var m t -> m a
-  assertUnified :: Var m t -> Var m t -> m a
-  assertSubsumed :: Var m t -> Var m t -> m a
+  assertEqual :: Var m t -> Var m t -> m ()
+  assertUnified :: Var m t -> Var m t -> m ()
+  assertSubsumed :: Var m t -> Var m t -> m ()
+
+  isAssumedEqual :: Var m t -> Var m t -> m Bool
+  isAssumedUnified :: Var m t -> Var m t -> m Bool
+  isAssumedSubsumed :: Var m t -> Var m t -> m Bool
 
 {-
 -- | Single layer term subsumption, that is aware of assumptions

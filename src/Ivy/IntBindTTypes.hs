@@ -45,20 +45,18 @@ type BSM = RWST Context () BindingState
 type BSEC e = (Typeable e)
 type BSMC m = (Monad m)
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
-type BSMTC m t = (BSMC m, BSTC t, Newtype (Var m t) Int)
+type BSMTC m t = (BSMC m, BSTC t, Newtype (Var (IntBindT m) t) Int)
 type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
 type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
 type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
 
 
-newtype UnivID = UnivID { getUnivID :: Int }
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+type UnivID = Int
 
-deriving instance Generic UnivID
 
-instance Newtype UnivID Int where
-  pack = UnivID
-  unpack = getUnivID
+instance Newtype Int Int where
+  pack = id
+  unpack = id
 
 newtype TermID (t :: Type -> Type) = TermID { getTermID :: Int }
   deriving newtype (Eq, Ord, Show, Hashable, NFData)
@@ -200,7 +198,7 @@ data TermState t where
   Bound :: { _boundState :: BoundState t } -> TermState t
 
 freeBoundState :: BoundState t
-freeBoundState = BoundState Nothing mempty TM.empty
+freeBoundState = BoundState Nothing TM.empty
 
 freeTermState :: TermState t
 freeTermState = Bound freeBoundState
@@ -214,7 +212,6 @@ type PropMap = TypeMap (OfType PropRel)
 
 data BoundState t = BoundState
   { _termValue :: Maybe (t (TermID t))
-  , _subsumed :: HashSet (TermID t)
   , _properties :: PropMap
   }
 
@@ -228,30 +225,25 @@ newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
 data RuleHistories = RuleHistories
   { _family :: RuleID
-  , _nextStep :: HashMap (RuleAction, UnivID) RuleHistories }
+  , _nextStep :: HashMap UnivID RuleHistories }
   deriving (Eq, Ord, Show)
 
 data RuleHistory = RuleHistory
   { _family :: RuleID
-  , _nextStep :: [(RuleAction, UnivID)] }
+  , _nextStep :: [UnivID] }
   deriving (Eq, Ord, Show)
 
 data RuleMeta = RuleMeta
   { _history    :: RuleHistory
   , _watched    :: HashSet UnivID
-  , _modified   :: HashSet UnivID
-  , _assertions :: Assertions UnivID
+  , _assumptions :: Assertions UnivID
   }
 
 newRuleMeta :: RuleID -> RuleMeta
-newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty mempty
-
-data RuleAction = Lookup | Bind
-  deriving (Eq, Ord, Show)
+newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
 type RT m = StateT RuleMeta m
 type RTIB m = RT (IntBindT m)
-
 type RuleIB m = Rule (IntBindT m)
 
 -- | Rules let us describe invariants over a term map as actions that
@@ -270,13 +262,6 @@ data RuleT m a where
     => { _type :: TypeRep t
        , _var :: Var m t
        , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
-       } -> RuleT m a
-
-  RBind :: (MonadBind e m t)
-    => { _type :: TypeRep t
-       , _var :: Var m t
-       , _term :: t (Var m t)
-       , _continue :: Var m t -> RT m (RuleT m a)
        } -> RuleT m a
 
   RLift :: ()

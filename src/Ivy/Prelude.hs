@@ -20,6 +20,8 @@ module Ivy.Prelude (
   , matchType2
   , mappendMaybe
   , mappendMaybes
+  , force
+  , errEq
 ) where
 
 import Intro as P hiding (Item)
@@ -39,7 +41,10 @@ import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
 import Data.These as P hiding (swap)
+import Data.Constraint.Unsafe
 
+errEq :: forall e e' m. (MonadError e m, MonadError e' m) :- (e ~ e')
+errEq = unsafeCoerceConstraint
 
 whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
 whenJust Nothing _ = skip

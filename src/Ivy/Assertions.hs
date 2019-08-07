@@ -44,6 +44,12 @@ instance (Ord a, Hashable a) => Monoid (Assertions a) where
 
 getRep :: (Ord i) => i -> Assertions i -> i
 getRep i a = P.rep (a ^. unifications) i
+{-# INLINE getRep #-}
+
+getRepL :: (Ord i) => i -> [Assertions i] -> i
+getRepL i [] = i
+getRepL i (l:ls) = getRepL (getRep i l) ls
+
 
 addEqAssertion :: (Ord i) => i -> i -> Assertions i -> Assertions i
 addEqAssertion a b = equalities %~ P.joinElems a b
@@ -60,9 +66,10 @@ updateSubs a@Assertions{..} = a{
   }
   where
     newList = HM.toList $ map (HS.map (\ i -> getRep i a)) _subsumptions
+{-# INLINE updateSubs #-}
 
 updateSub :: (Ord i, Hashable i) => i -> i -> Assertions i -> Assertions i
-updateSub i j a = if assertedSubsumed j i a
+updateSub i j a = if isAssertedSubsumed j i a
   then addUniAssertion i j a
   else (subsumptions %~
      ( HM.adjust (HS.map (\ n -> if n == i then j else n)) i
@@ -73,18 +80,43 @@ updateSub i j a = if assertedSubsumed j i a
       Nothing -> id
       Just s  -> HM.insertWith (<>) i s
 
-assertedEqual :: (Ord i) => i -> i -> Assertions i -> Bool
-assertedEqual i j a
-  =    (P.rep (a ^. equalities) (getRep i a))
-    == (P.rep (a ^. equalities) (getRep j a))
+isAssertedEqual :: (Ord i) => i -> i -> Assertions i -> Bool
+isAssertedEqual i j a
+  = isAssertedUnified i j a || (   (P.rep (a ^. equalities) (getRep i a))
+    == (P.rep (a ^. equalities) (getRep j a)))
+{-# INLINE isAssertedEqual #-}
 
-assertedUnified :: (Ord i) => i -> i -> Assertions i -> Bool
-assertedUnified i j a
+isAssertedEqualL :: (Ord i) => i -> i -> [Assertions i] -> Bool
+isAssertedEqualL _ _ [] = False
+isAssertedEqualL i j (l:ls) = isAssertedEqual i j l || isAssertedEqualL i' j' ls
+  where
+    i' = getRep i l
+    j' = getRep j l
+
+isAssertedUnified :: (Ord i) => i -> i -> Assertions i -> Bool
+isAssertedUnified i j a
   =    (P.rep (a ^. unifications) (getRep i a))
     == (P.rep (a ^. unifications) (getRep j a))
+{-# INLINE isAssertedUnified #-}
 
-assertedSubsumed :: (Ord i, Hashable i) => i -> i -> Assertions i -> Bool
-assertedSubsumed i j a = (assertedUnified i j a) || (
+isAssertedUnifiedL :: (Ord i) => i -> i -> [Assertions i] -> Bool
+isAssertedUnifiedL _ _ [] = False
+isAssertedUnifiedL i j (l:ls) = isAssertedUnified i j l || isAssertedUnifiedL i' j' ls
+  where
+    i' = getRep i l
+    j' = getRep j l
+
+isAssertedSubsumed :: (Ord i, Hashable i) => i -> i -> Assertions i -> Bool
+isAssertedSubsumed i j a = (isAssertedUnified i j a) || (
   case HM.lookup (getRep i a) (a ^. subsumptions) of
     Nothing -> False
     Just b  -> HS.member (getRep j a) b)
+{-# INLINE isAssertedSubsumed #-}
+
+isAssertedSubsumedL :: (Ord i, Hashable i) => i -> i -> [Assertions i] -> Bool
+isAssertedSubsumedL _ _ [] = False
+isAssertedSubsumedL i j a@(l:ls) = isAssertedSubsumed i j l || isAssertedSubsumedL i' j' ls
+  where
+    i' = getRepL i a
+    j' = getRepL j a
+{-# INLINE isAssertedSubsumedL #-}
