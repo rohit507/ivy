@@ -20,6 +20,7 @@ module Ivy.Prelude (
   , matchType2
   , mappendMaybe
   , mappendMaybes
+  , force
 ) where
 
 import Intro as P hiding (Item)
@@ -32,6 +33,7 @@ import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
 import Data.Functor.Classes as P (liftEq)
 import Control.Monad.Trans.Control as P hiding (embed)
+import Control.Alternative.Free as P
 import Data.Reify as P
 import Control.Monad.Free.Church as P
 import Control.Newtype as P
