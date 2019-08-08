@@ -462,42 +462,13 @@ instance (MonadProperties e m
                       => proxy p -> These (Var m t') (Var m t') -> RuleT m a)
       -> (a -> a -> RuleT m a)
       -> a
-      -> Var (RuleT m) t -> Var (RuleT m) t -> RuleT m a
+      -> Var m t -> Var m t -> RuleT m a
   getPropertyPairs f append empty a b = RLift $ do
-    ((), initial) <- captureT
-    r :: [RuleT m a] <- restoreT . pure =<< (liftWith $ lifted initial)
+    r :: [RuleT m a] <- lift $ getPropertyPairs
+        (\ p t -> pure . pure $ f p t)
+        (\ a b -> pure $ a <> b)
+        [] a b
     rtDrop $ foldrM append empty =<< sequenceA r
-    where
-
-      lifted :: forall t' p' proxy. (MonadProperty e p' m, Property p' t t')
-             => RuleMeta -> Run RT -> m (StT RT [RuleT m a])
-      lifted init run = getPropertyPairs @e @m (f' run) (append' run) (mempty, init) a b
-
-      f' :: forall t' p' proxy. (MonadProperty e p' m, Property p' t t')
-        => Run RT -> proxy p' -> These (Var m t') (Var m t') -> m (StT RT [RuleT m a])
-      f' run p t = run (pure . pure $ f p t)
-
-      -- append' :: Run RT -> StT RT [RuleT m a] -> StT RT [RuleT m a] -> m (StT RT [RuleT m a])
-      append' run a b = run $ do
-        a' <- restoreT $ pure a
-        b' <- restoreT $ pure b
-        pure $ a' <> b'
-
-{-
-                             (getPropertyPairs)
-                 f' ma' mempty a b :: RT m (StT RT a))
-
-    where
-
-       f' :: proxy p -> These (Var m t') (Var m t') -> RT m (StT RT a)
-       f' p a = liftWith (\ run -> run (rtDrop $ f p a))
-
-       ma' :: a -> a -> RT m a
-       ma' sta stb = liftWith (\ run -> run (do
-                                              a <- restoreT sta
-                                              b <- restoreT stb
-                                              _ $ mappend a b))
--}
 
 instance (Monad m) => MonadFail (RuleT m) where
   fail _ = RLift $ pure []
