@@ -251,14 +251,6 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (That v)
 
-
-instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadUnify e (IntBindT m) t where
-
-  equals = undefined
-  unify = undefined
-  subsume = undefined
-
-
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
@@ -296,7 +288,6 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
     assert <- use assertions
     assume <- view assumptions
     pure $ isAssertedSubsumedL (force a) (force b) [assume, assert]
-
 
 assumeEqualS :: forall a m t. (BSMTC m t) => UnivID -> UnivID -> BSM m a -> BSM m a
 assumeEqualS a b m = local (assumptions %~ addEqAssertion a b) m
@@ -354,7 +345,6 @@ instance (MonadError e m) => MonadError e (RuleT m) where
   -- catchError (RBind t v a k) r = RBind t v a (\ nt -> catchError (k nt) (pure . r))
   -- catchError (RLift as) r      = RLift $ map (\ a -> catchError a r) <$> as
 
-
 instance MonadTrans RuleT where
   lift = RLift . map (pure . RPure) . lift
 
@@ -369,8 +359,6 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
   lookupVar a = RLook typeRep a (pure . pure)
 
   redirectVar a b = lift $ redirectVar a b
-
-instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (RuleT m) t
 
 instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e m t) => MonadAssume e (RuleT m) t where
 
@@ -493,7 +481,6 @@ addTermToIdents t = idents . at (force t) .= Just (toExID t)
 -- | Navigates to representative and returns the termState
 getTermState :: forall m t. (BSMTC m t) => TermID t -> BSM m (TermState t)
 getTermState t = do
-  t' <- getRepresentative t
   maybeM (panic "unreachable: we were somehow passed an unused term")
     $ use (terms . at @(TermMap t) t)
 
@@ -548,7 +535,6 @@ getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
-
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule

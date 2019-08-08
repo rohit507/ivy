@@ -100,31 +100,6 @@ class (Typeable p, Monad m) => MonadProperty e p m where
       => p -> Var m t -> m (Var m t')
 
 
-class (MonadBind e m t) => MonadUnify e m t where
-
-  -- | Check whether two terms are equal. i.e That they could be unified without
-  --   an error.
-  --
-  --   NOTE :: This should be aware of assumptions
-  equals :: Var m t -> Var m t -> m Bool
-  default equals :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
-  equals = undefined
-
-  -- | Unify two terms and return the variable for the result. Once run
-  --   both inputs and the return value are all functionally identical.
-  --
-  --   NOTE :: This also unifies the properties of both variables.
-  unify :: Var m t -> Var m t -> m (Var m t)
-  default unify :: (MonadAssume e m t) => Var m t -> Var m t -> m (Var m t)
-  unify = undefined
-
-  -- | Ensure that the first term subsumes the second.
-  --
-  --   NOTE :: This does not ensure that the properties all also subsume each
-  --           other. There is no need, since the inputs stay separate.
-  subsume :: Var m t -> Var m t -> m (Var m t)
-  default subsume :: (MonadAssume e m t, MonadRule e m) => Var m t -> Var m t -> m (Var m t)
-  subsume = undefined
 
 
 -- | This class is only relevant to implementers of a MonadProperty.
@@ -133,7 +108,7 @@ class (MonadBind e m t) => MonadUnify e m t where
 class MonadProperties e m where
 
   getPropertyPairs :: forall a t. (MonadBind e m t)
-      => (forall t' p proxy. ( MonadProperty e p m
+      => (forall t' p proxy. ( MonadProperty e p m, MonadBind e m t'
                         , Property p t t')
                       => proxy p -> These (Var m t') (Var m t') -> m a)
       -> (a -> a -> m a)
@@ -146,7 +121,7 @@ class MonadProperties e m where
 --
 --   This basically makes it easier to handle coinductive reasoning about
 --   equality, unity, and subsumption.
-class (MonadUnify e m t) => MonadAssume e m t where
+class (MonadBind e m t) => MonadAssume e m t where
 
 
   -- | Within the passed action assume the two variables are equivalent.
@@ -168,23 +143,9 @@ class (MonadUnify e m t) => MonadAssume e m t where
   isAssumedUnified :: Var m t -> Var m t -> m Bool
   isAssumedSubsumed :: Var m t -> Var m t -> m Bool
 
-{-
--- | Single layer term subsumption, that is aware of assumptions
-isAssumedSubsumed :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
-isAssumedSubsumed a b = assertedSubsumed a b <$> getAssumptions
-
--- | Variable equality that is aware of assumptions
-isAssumedUnified :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
-isAssumedUnified a b = assertedUnified a b <$> getAssumptions
-
--- | Are the two terms equal
-isAssumedEqual :: (MonadAssume e m t) => Var m t -> Var m t -> m Bool
-isAssumedEqual a b = assertedUnified a b <$> getAssumptions
--}
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
 class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
-      , forall t. (MonadUnify e m t) => MonadUnify e (Rule m) t
       , forall t. (MonadAssume e m t) => MonadAssume e (Rule m) t
       , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
       , Var m ~ Var (Rule m)
@@ -205,12 +166,19 @@ data BinOpContext a b e m t = BinOpContext
   { check :: These (Var m t) (Var m t) -> m (Maybe a)
   , assume :: These (Var m t) (Var m t) -> m (Maybe b) -> m (Maybe b)
   , handle :: e -> m b
-  , traversing :: forall c. (c -> m a) -> t c -> m b
+  , traversing :: forall c. (c -> m a) -> t (m c) -> m b
   , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
   }
 
-{-
-recBinOpF :: forall a b e m t. (MonadBind e m t, JoinSemiLattice1 e t)
+type MonadUnify e m t
+  = ( MonadRule e m
+    , MonadBind e m t
+    , MonadAssume e m t
+    , MonadProperties e m
+    , Var m ~ Var (Rule m)
+    )
+
+recBinOpF :: forall a b c e m t. (MonadBind e m t, JoinSemiLattice1 e t)
          => BinOpContext a b e m t
          -> (These (Var m t) (Var m t) -> m a)
          -> These (Var m t) (Var m t)
@@ -238,16 +206,16 @@ recBinOpF BinOpContext{..} = \ recurse inputs ->
     nothingCase = pure Nothing
 
     thisCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
-    thisCase f ta = Just <$> (traversing f $ map This ta)
+    thisCase f ta = Just <$> (traversing f $ map (pure . This) ta)
 
 
     thatCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
-    thatCase f tb = Just <$> (traversing f $ map That tb)
+    thatCase f tb = Just <$> (traversing f $ map (pure . That) tb)
 
     theseCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> t (Var m t) -> m (Maybe b)
     theseCase f ta tb = Just <$> case liftLatJoin ta tb of
       Left e -> handle e
-      Right tu -> traversing f tu
+      Right tu -> traversing f (map pure tu)
 
 recBinOp :: forall a b e m t. (MonadBind e m t, JoinSemiLattice1 e t)
          => BinOpContext a b e m t
@@ -270,19 +238,19 @@ instance Eq (TVar m) where
 
 -- | Returns nothing if the terms aren't equal, otherwise it returns a list
 --   of terms that should be unified to unify the input terms.
-defaultEquals :: forall e m t. (MonadAssume e m t, MonadProperties e m, JoinSemiLattice1 e t)
+equals :: forall e m t. (MonadUnify e m t)
    => Var m t -> Var m t -> m Bool
-defaultEquals a b = recBinOp context (These a b)
+equals a b = recBinOp context (These a b)
 
   where
 
     context :: BinOpContext Bool Bool e m t
     context = BinOpContext{..}
 
-    traversing :: forall c. (c -> m Bool) -> t c -> m Bool
-    traversing f t = allM f $ (foldMap (:[]) t :: [c])
+    traversing :: forall c. (c -> m Bool) -> t (m c) -> m Bool
+    traversing f t = allM (>>= f) $ (foldMap (:[]) t :: [m c])
 
-    check (These a b) = ifM undefined -- (a `equals` b)
+    check (These a b) = ifM (a `isAssumedEqual` b)
       (pure . Just $ True) (pure Nothing)
     check _ = pure . Just $ True
 
@@ -298,7 +266,7 @@ defaultEquals a b = recBinOp context (These a b)
     equalsProps :: Var m t -> Var m t -> m Bool
     equalsProps a b = helper a b
 
-    helper a b = getPropertyPairs @e getEq (&&^) True a b
+    helper a b = getPropertyPairs @e getEq (\ a b -> pure $ a && b) True a b
       where
         getEq :: forall p t'. (JoinSemiLattice1 e t', MonadAssume e t' m)
                  => p -> These (Var m t') (Var m t') -> m Bool
@@ -306,9 +274,9 @@ defaultEquals a b = recBinOp context (These a b)
         getEq _ _ = pure True
 
 -- | unifies two terms as needed
-defaultUnify :: forall e m t. (MonadAssume e m t, MonadProperties e m, JoinSemiLattice1 e t)
+unify :: forall e m t. (MonadUnify e m t)
    => Var m t -> Var m t -> m (Var m t)
-defaultUnify a b = recBinOp context (These a b)
+unify a b = recBinOp context (These a b)
 
   where
 
@@ -317,7 +285,7 @@ defaultUnify a b = recBinOp context (These a b)
 
     check (This a) = pure $ Just a
     check (That b) = pure $ Just b
-    check (These a b) = ifM undefined -- (a `isUnifiedWith` b)
+    check (These a b) = ifM (a `isAssumedUnified` b)
        (pure . Just $ b) (pure Nothing)
 
 
@@ -332,6 +300,7 @@ defaultUnify a b = recBinOp context (These a b)
       unifyProps a b
       b' <- maybe (pure b) (bindVar b) mTerm
       redirectVar a b'
+      assertUnified a b
     merge _ _ = panic "unreachable"
 
     unifyProps :: Var m t -> Var m t -> m ()
@@ -342,7 +311,7 @@ defaultUnify a b = recBinOp context (These a b)
                                  , JoinSemiLattice1 e t'
                                  , MonadAssume e t' m)
                  => p -> These (Var m t') (Var m t') -> m ()
-        unifyProp _ (These a' b') = unify @e @t' @m a' b' *> skip
+        unifyProp _ (These a' b') = unify @e @m @t' a' b' *> skip
         unifyProp p (This a') = (unify a' =<< (p  `propertyOf` b)) *> skip
         unifyProp _ _ = skip
 
@@ -351,44 +320,38 @@ defaultUnify a b = recBinOp context (These a b)
 --   FIXME :: This has a subtle error because we don't actually keep a visible
 --           mapping from subsumed to subsumer. It'll end up duplicating terms
 --           from the subsumer if they're referenced multiple times.
-defaultSubsume :: forall e t r m. ( MonadRule e r m
-                          , MonadBind e m t
-                          , MonadBind e t r
-                          , MonadAssume e t r
-                          , JoinSemiLattice1 e t
-                          , Var r ~ Var m)
-        => Var r t -> Var r t -> m (Var r t)
-defaultSubsume a b = (addRule $ performSubsume a b) *> pure b
+subsume :: forall e m t. ( MonadUnify e m t)
+        => Var m t -> Var m t -> m (Var m t)
+subsume a b = (addRule $ performSubsume a b *> skip) *> pure b
 
   where
 
-    performSubsume :: Var r t -> Var r t -> r (Var r t)
+    performSubsume :: Var m t -> Var m t -> Rule m (Var m t)
     performSubsume a b = recBinOp context (These a b)
 
-    context :: BinOpContext (Var r t) (t (Var r t)) e t r
+    context :: BinOpContext (Var m t) (t (Var m t)) e t (Rule m)
     context = BinOpContext{..}
 
-    check :: These (Var r t) (Var r t) -> r (Maybe (Var r t))
+    check :: These (Var m t) (Var m t) -> Rule m (Maybe (Var m t))
     check (This a) = Just <$> (subsume a =<< freeVar)
     check (That b) = pure $ Just b
     -- Even if a does already subsume b we still need to run the recursive
     -- pass of the rule, since it will update the subsumed term anyway
     -- The only other case occours when two terms subsume each other and
     -- need to be unified.
-    check (These a b) = ifM undefined --(b `isSubsuming` a)
+    check (These a b) = ifM (b `isAssumedSubsumed` a)
                             (Just <$> unify a b)
                             (pure Nothing)
 
-    assume :: forall c. These (Var r t) (Var r t) -> r c -> r c
+    assume :: forall c. These (Var m t) (Var m t) -> Rule m c -> Rule m c
     assume (These a b) = assumeSubsumed a b
     assume _ = id
 
-    handle :: forall c. e -> r c
+    handle :: forall c. e -> Rule m c
     handle = throwError
 
     traversing = traverse
 
-    merge :: These (Var r t) (Var r t) -> Maybe (t (Var r t)) -> r (Var r t)
+    merge :: These (Var m t) (Var m t) -> Maybe (t (Var m t)) -> Rule m (Var m t)
     merge (These _ b) mTerm = maybe (pure b) (bindVar b) mTerm
     merge _ _ = panic "unreachable"
--}
