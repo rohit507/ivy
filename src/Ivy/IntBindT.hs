@@ -307,6 +307,18 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => UnivID -> UnivID -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
 
+instance ( Typeable e
+         , forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
+         , MonadError e m)
+  => MonadRule e (IntBindT m) where
+
+  type Rule (IntBindT m) = RuleT (IntBindT m)
+
+  addRule r = IntBindT $
+    (newRuleMeta <$> newIdent)
+      >>= insertRule r
+      >>= triggerRule
+
 instance Functor m => Functor (RuleT m) where
   fmap f (RLook t v k) = RLook t v (\ mt -> map f <$> k mt)
   fmap f (RLift as) = RLift $ map (map f) <$> as
@@ -363,13 +375,31 @@ instance (MonadRule e m, Rule m ~ RuleT m, MonadAssume e m t) => MonadUnify e (R
 instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e m t) => MonadAssume e (RuleT m) t where
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeEqual = undefined
+  assumeEqual a b m = RLift $ do
+    old <- use @RuleMeta assumptions
+    assumptions %= addEqAssertion (force a) (force b)
+    rtDrop $ do
+     a <- m
+     rtLift $ assumptions .= old
+     pure a
 
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeUnified = undefined
+  assumeUnified a b m = RLift $ do
+    old <- use @RuleMeta assumptions
+    assumptions %= addUniAssertion (force a) (force b)
+    rtDrop $ do
+     a <- m
+     rtLift $ assumptions .= old
+     pure a
 
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeSubsumed = undefined
+  assumeSubsumed a b m = RLift $ do
+    old <- use @RuleMeta assumptions
+    assumptions %= addSubAssertion (force a) (force b)
+    rtDrop $ do
+     a <- m
+     rtLift $ assumptions .= old
+     pure a
 
   assertEqual :: Var m t -> Var m t -> RuleT m ()
   assertEqual a b = lift $ assertEqual a b
@@ -398,6 +428,7 @@ instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e
       pure (isAssertedUnified a' b' assumed)
         ||^ (lift $ isAssumedUnified @_ @_ @t (force a') (force b'))
 
+  -- | It is unclear is this is
   isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
   isAssumedSubsumed a b = RLift $ do
     assumed :: Assertions Int <- use assumptions
@@ -406,24 +437,6 @@ instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e
           b' = getRep (force b) assumed
       pure (isAssertedSubsumed a' b' assumed)
         ||^ (lift $ isAssumedSubsumed @_ @_ @t (force a') (force b'))
-
-isAssumedEqualR :: TermID t -> TermID t -> RuleT m Bool
-isAssumedEqualR = undefined
-
-assumeEqualR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
-assumeEqualR = undefined
-
-isAssumedUnifiedR :: TermID t -> TermID t -> RuleT m Bool
-isAssumedUnifiedR = undefined
-
-assumeUnifiedR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
-assumeUnifiedR = undefined
-
-isAssumedSubsumedR :: TermID t -> TermID t -> RuleT m Bool
-isAssumedSubsumedR = undefined
-
-assumeSubsumedR :: TermID t -> TermID t -> RuleT m a -> RuleT m a
-assumeSubsumedR = undefined
 
 instance ( MonadRule e m
          , forall t. (MonadBind e (Rule m) t) => MonadBind e m t
@@ -435,17 +448,56 @@ instance ( MonadRule e m
      => p -> Var (RuleT m) t -> RuleT m (Var (RuleT m) t')
   propertyOf p v = lift $ propertyOf @e p v
 
-instance ( Typeable e
-         , forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
-         , MonadError e m)
-  => MonadRule e (IntBindT m) where
+instance (MonadProperties e m
+         , forall t. MonadBind e (RuleT m) t => MonadBind e m t
+         , forall p. MonadProperty e p (RuleT m) => MonadProperty e p m
+         , MonadRule e m
+         , Rule m ~ RuleT m
+         , Var m ~ Var (RuleT m)
+         ) => MonadProperties e (RuleT m) where
 
-  type Rule (IntBindT m) = RuleT (IntBindT m)
+  getPropertyPairs :: forall a t. (MonadBind e m t)
+      => (forall t' p proxy. ( MonadProperty e p m
+                        , Property p t t')
+                      => proxy p -> These (Var m t') (Var m t') -> RuleT m a)
+      -> (a -> a -> RuleT m a)
+      -> a
+      -> Var (RuleT m) t -> Var (RuleT m) t -> RuleT m a
+  getPropertyPairs f append empty a b = RLift $ do
+    ((), initial) <- captureT
+    r :: [RuleT m a] <- restoreT . pure =<< (liftWith $ lifted initial)
+    rtDrop $ foldrM append empty =<< sequenceA r
+    where
 
-  addRule r = IntBindT $
-    (newRuleMeta <$> newIdent)
-      >>= insertRule r
-      >>= triggerRule
+      lifted :: forall t' p' proxy. (MonadProperty e p' m, Property p' t t')
+             => RuleMeta -> Run RT -> m (StT RT [RuleT m a])
+      lifted init run = getPropertyPairs @e @m (f' run) (append' run) (mempty, init) a b
+
+      f' :: forall t' p' proxy. (MonadProperty e p' m, Property p' t t')
+        => Run RT -> proxy p' -> These (Var m t') (Var m t') -> m (StT RT [RuleT m a])
+      f' run p t = run (pure . pure $ f p t)
+
+      -- append' :: Run RT -> StT RT [RuleT m a] -> StT RT [RuleT m a] -> m (StT RT [RuleT m a])
+      append' run a b = run $ do
+        a' <- restoreT $ pure a
+        b' <- restoreT $ pure b
+        pure $ a' <> b'
+
+{-
+                             (getPropertyPairs)
+                 f' ma' mempty a b :: RT m (StT RT a))
+
+    where
+
+       f' :: proxy p -> These (Var m t') (Var m t') -> RT m (StT RT a)
+       f' p a = liftWith (\ run -> run (rtDrop $ f p a))
+
+       ma' :: a -> a -> RT m a
+       ma' sta stb = liftWith (\ run -> run (do
+                                              a <- restoreT sta
+                                              b <- restoreT stb
+                                              _ $ mappend a b))
+-}
 
 instance (Monad m) => MonadFail (RuleT m) where
   fail _ = RLift $ pure []
@@ -526,26 +578,6 @@ getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
-addEqAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assertions (TermID t) -> Assertions (TermID t)
-addEqAssumption = undefined
-
-hasEqAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
-hasEqAssumption = undefined
-
-addUniAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assertions (TermID t) ->  Assertions (TermID t)
-addUniAssumption = undefined
-
-hasUniAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
-hasUniAssumption = undefined
-
-addSubAssumption :: forall t. (BSTC t)
-  => TermID t -> TermID t -> Assertions (TermID t) -> Assertions (TermID t)
-addSubAssumption = undefined
-
-hasSubAssumption :: TermID t -> TermID t -> Assertions (TermID t) -> BSM m Bool
-hasSubAssumption = undefined
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule

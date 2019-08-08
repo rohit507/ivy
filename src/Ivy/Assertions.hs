@@ -113,6 +113,15 @@ isAssertedSubsumed i j a = (isAssertedUnified i j a) || (
     Just b  -> HS.member (getRep j a) b)
 {-# INLINE isAssertedSubsumed #-}
 
+-- | It is unclear if this meets the property that we expect, namely that:
+--
+--   prop> forall i j a a'. isAllertedSubsumed i j (a <> a') == isAlertedSubsumedL i j [a, a']
+--
+--   If it does then we're fine, though I suspect we might need to refactor
+--   the structure of assertions to make it work.
+--
+--   FIXME :: nope, even the basic check isn't sound since pushing and popping
+--            elements from the stack will fail.
 isAssertedSubsumedL :: (Ord i, Hashable i) => i -> i -> [Assertions i] -> Bool
 isAssertedSubsumedL _ _ [] = False
 isAssertedSubsumedL i j a@(l:ls) = isAssertedSubsumed i j l || isAssertedSubsumedL i' j' ls

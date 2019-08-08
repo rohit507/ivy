@@ -242,7 +242,7 @@ data RuleMeta = RuleMeta
 newRuleMeta :: RuleID -> RuleMeta
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
-type RT m = StateT RuleMeta m
+type RT = StateT RuleMeta
 type RTIB m = RT (IntBindT m)
 type RuleIB m = Rule (IntBindT m)
 
@@ -271,6 +271,11 @@ data RuleT m a where
     => { _actions :: a
        } -> RuleT m a
 
+rtLift :: (Monad m, Applicative (RuleT m)) => RT m a -> RuleT m a
+rtLift m = RLift $ m >>= pure . pure . pure
+
+rtDrop :: (Monad m, Applicative (RuleT m)) => RuleT m a -> RT m [RuleT m a]
+rtDrop = pure . pure
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config
