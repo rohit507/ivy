@@ -163,19 +163,19 @@ propertyOfS p v = getProperty p v >>= \case
 
 instance (forall t. (BSETC e t) => (BSEMTC e m t)) => MonadProperties e (IntBindT m) where
 
-  getPropertyPairs :: forall a t. (BSEMTC e m t)
+  {- getPropertyPairs :: forall a t. (BSEMTC e m t)
       => (forall t' p proxy. (BSEMTC e m t' , Property p t t', MonadProperty e p (IntBindT m))
                       => proxy p -> These (VarIB m t') (VarIB m t') -> IntBindT m a)
       -> (a -> a -> IntBindT m a)
       -> a
-      -> VarIB m t -> VarIB m t -> IntBindT m a
+      -> VarIB m t -> VarIB m t -> IntBindT m a -}
   getPropertyPairs f mappendM mempty a b
     = IntBindT $ getPropertyPairsS f' mappendM' mempty (force a) (force b)
 
     where
 
-      f' :: forall t' p proxy. (BSEMTC e m t', BSEMTC e m t, Property p t t', MonadProperty e p (IntBindT m))
-         => proxy p -> These (TermID t') (TermID t') -> BSM m a
+      -- f' :: forall t' p proxy. (BSEMTC e m t', BSEMTC e m t, Property p t t', MonadProperty e p (IntBindT m))
+      --   => proxy p -> These (TermID t') (TermID t') -> BSM m a
       f' p t = getIntBindT $ (f p (bimap force force t) :: IntBindT m a)
 
       mappendM' :: a -> a -> BSM m a
@@ -444,13 +444,13 @@ instance (MonadProperties e m
          , Var m ~ Var (RuleT m)
          ) => MonadProperties e (RuleT m) where
 
-  getPropertyPairs :: forall a t. (MonadBind e m t)
+  {- getPropertyPairs :: forall a t. (MonadBind e m t)
       => (forall t' p proxy. ( MonadProperty e p m
                         , Property p t t')
                       => proxy p -> These (Var m t') (Var m t') -> RuleT m a)
       -> (a -> a -> RuleT m a)
       -> a
-      -> Var m t -> Var m t -> RuleT m a
+      -> Var m t -> Var m t -> RuleT m a -}
   getPropertyPairs f append empty a b = RLift $ do
     r :: [RuleT m a] <- lift $ getPropertyPairs
         (\ p t -> pure . pure $ f p t)
