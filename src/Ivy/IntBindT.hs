@@ -182,12 +182,7 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t)) => MonadProperties e (IntBind
       mappendM' a b = getIntBindT $ mappendM a b
 
 
-getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
-    => (forall t' p proxy. (BSEMTC e m t', Property p t t', MonadProperty e p (IntBindT m))
-              => proxy p -> These (TermID t') (TermID t') -> BSM m a)
-    -> (a -> a -> BSM m a)
-    -> a
-    -> TermID t -> TermID t -> BSM m a
+getPropertyPairsS :: forall a e m t. _
 getPropertyPairsS f mappend mempty a b = do
   pma <- getPropMap a
   pmb <- getPropMap b
@@ -197,10 +192,9 @@ getPropertyPairsS f mappend mempty a b = do
         = TM.difference (TM.map empty pma) theseMap
       thatMap :: TypeMap (OfType ())
         = TM.difference (TM.map empty pmb) theseMap
-  these :: [a] <- catMaybes . TM.toList
-    <$> TM.traverse (theseOp pma pmb) theseMap
-  that :: [a] <- catMaybes . TM.toList <$> TM.traverse (thatOp pma) thatMap
-  this :: [a] <- catMaybes . TM.toList <$> TM.traverse (thisOp pma) thisMap
+  these :: [a] <- catMaybes . TM.toList <$> TM.traverse (theseOp pma pmb) theseMap
+  that  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thatOp pma) thatMap
+  this  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thisOp pma) thisMap
   foldrM mappend mempty $ this <> that <> these
 
   where
@@ -209,10 +203,10 @@ getPropertyPairsS f mappend mempty a b = do
        => Proxy t -> a -> ()
     empty _ _ = ()
 
-    theseOp :: forall p proxy. (Typeable p)
+    theseOp :: forall p. (Typeable p)
           => PropMap
           -> PropMap
-          -> proxy p
+          -> p
           -> ()
           -> BSM m (Maybe a)
     theseOp rma rmb p _ = sequenceA $ do
@@ -227,9 +221,9 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (These v v')
 
-    thisOp :: forall p proxy. (Typeable p)
+    thisOp :: forall p . (Typeable p)
           => PropMap
-          -> proxy p
+          -> p
           -> ()
           -> BSM m (Maybe a)
     thisOp rma p _ = sequenceA $ do
@@ -239,9 +233,9 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (This v)
 
-    thatOp :: forall p proxy. (Typeable p)
+    thatOp :: forall p. (Typeable p)
           => PropMap
-          -> proxy p
+          -> p
           -> ()
           -> BSM m (Maybe a)
     thatOp rmb p _ = sequenceA $ do
