@@ -60,7 +60,7 @@ instance MonadTransControl IntBindT where
 
 type VarIB m = VarID (IntBindT m)
 
-instance (BSEMTC e m t, Eq1 t)
+instance (BSEMTC e m t)
          => MonadBind e (IntBindT m) t where
 
   type Var (IntBindT m) = VarID (IntBindT m)
@@ -161,28 +161,36 @@ propertyOfS p v = getProperty p v >>= \case
     pure r
   Just r -> pure r
 
-instance (forall t. (BSETC e t) => (BSEMTC e m t)) => MonadProperties e (IntBindT m) where
+instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties e (IntBindT m) where
 
-  {- getPropertyPairs :: forall a t. (BSEMTC e m t)
-      => (forall t' p proxy. (BSEMTC e m t' , Property p t t', MonadProperty e p (IntBindT m))
-                      => proxy p -> These (VarIB m t') (VarIB m t') -> IntBindT m a)
+
+  getPropertyPairs :: forall a t. (MonadBind e (IntBindT m) t)
+      => (forall t' p. (MonadUnify e (IntBindT m) t', MonadProperty e p (IntBindT m), Property p t t')
+                      => p -> These (VarIB m t') (VarIB m t') -> IntBindT m a)
       -> (a -> a -> IntBindT m a)
       -> a
-      -> VarIB m t -> VarIB m t -> IntBindT m a -}
+      -> VarIB m t -> VarIB m t -> IntBindT m a
   getPropertyPairs f mappendM mempty a b
     = IntBindT $ getPropertyPairsS f' mappendM' mempty (force a) (force b)
 
     where
 
-      -- f' :: forall t' p proxy. (BSEMTC e m t', BSEMTC e m t, Property p t t', MonadProperty e p (IntBindT m))
-      --   => proxy p -> These (TermID t') (TermID t') -> BSM m a
+
+      f' :: (forall t' p. (Property p t t', BSEMTC e m t')
+                    => p -> These (TermID t') (TermID t') ->BSM m a)
       f' p t = getIntBindT $ (f p (bimap force force t) :: IntBindT m a)
 
       mappendM' :: a -> a -> BSM m a
       mappendM' a b = getIntBindT $ mappendM a b
 
 
-getPropertyPairsS :: forall a e m t. _
+
+getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
+    => (forall t' p. (Property p t t', BSEMTC e m t')
+                    => p -> These (TermID t') (TermID t') ->BSM m a)
+    -> (a -> a -> BSM m a)
+    -> a
+    ->TermID t -> TermID t -> BSM m a
 getPropertyPairsS f mappend mempty a b = do
   pma <- getPropMap a
   pmb <- getPropMap b
@@ -292,17 +300,21 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => UnivID -> UnivID -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
 
-instance ( Typeable e
-         , forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
-         , MonadError e m)
+
+
+
+instance ( forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
+         , BSEMC e m)
   => MonadRule e (IntBindT m) where
 
   type Rule (IntBindT m) = RuleT (IntBindT m)
 
-  addRule r = IntBindT $
-    (newRuleMeta <$> newIdent)
-      >>= insertRule r
-      >>= triggerRule
+  addRule = IntBindT . addRuleS
+
+addRuleS :: (BSMC m) => RuleIB m () -> BSM m ()
+addRuleS r = do
+  rid :: RuleID <- newIdent
+  insertRule (newRuleMeta rid) r >>= triggerRule
 
 instance Functor m => Functor (RuleT m) where
   fmap f (RLook t v k) = RLook t v (\ mt -> map f <$> k mt)
@@ -353,6 +365,8 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
   lookupVar a = RLook typeRep a (pure . pure)
 
   redirectVar a b = lift $ redirectVar a b
+
+  freshenVar = lift . freshenVar
 
 instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e m t) => MonadAssume e (RuleT m) t where
 
@@ -438,13 +452,12 @@ instance (MonadProperties e m
          , Var m ~ Var (RuleT m)
          ) => MonadProperties e (RuleT m) where
 
-  {- getPropertyPairs :: forall a t. (MonadBind e m t)
-      => (forall t' p proxy. ( MonadProperty e p m
-                        , Property p t t')
-                      => proxy p -> These (Var m t') (Var m t') -> RuleT m a)
+  getPropertyPairs :: forall a t. (MonadBind e (RuleT m) t)
+      => (forall t' p. (MonadUnify e (RuleT m) t', MonadProperty e p (RuleT m), Property p t t')
+                      => p -> These (Var m t') (Var m t') -> RuleT m a)
       -> (a -> a -> RuleT m a)
       -> a
-      -> Var m t -> Var m t -> RuleT m a -}
+      -> Var m t -> Var m t -> RuleT m a
   getPropertyPairs f append empty a b = RLift $ do
     r :: [RuleT m a] <- lift $ getPropertyPairs
         (\ p t -> pure . pure $ f p t)
@@ -481,9 +494,40 @@ getTermState t = do
 freshenTerm :: forall m t. (BSMTC m t) => t (TermID t) -> BSM m (t (TermID t))
 freshenTerm = traverse getRepresentative
 
--- | Applies the default rules to the
-runDefaultRules :: TermID t -> BSM m ()
-runDefaultRules = undefined
+-- | Applies the default rules to the given term
+runDefaultRules :: forall m t. (BSMTC m t) => TermID t -> BSM m ()
+runDefaultRules t = do
+  mrs <- TM.lookup (typeRep @(Term t)) <$> (use defaultRules :: BSM m (RuleMap))
+  case mrs of
+    Nothing -> skip
+    Just (DefaultRule _ tm rs) -> case eqTypeRep tm (typeRep @(IntBindT m)) of
+      Nothing -> panic "unreachable"
+      Just HRefl -> sequenceA_ $ map
+          (\ f -> addRuleS $ f (force @(VarIB m t) t))
+          rs
+
+addDefaultRule :: forall e m t. (BSEMTC e m t, MonadRule e (IntBindT m)) => (VarIB m t -> RuleIB m ()) -> BSM m ()
+addDefaultRule r = do
+  ts <- getAllTerms @m @t
+  sequenceA_ $ map
+      (\ t -> addRuleS $ r (force @(VarIB m t) t))
+          ts
+  insertDefaultRule r
+
+insertDefaultRule :: forall e m t. (BSEMTC e m t, MonadRule e (IntBindT m)) => (VarIB m t -> RuleIB m ()) -> BSM m ()
+insertDefaultRule r = (TM.lookup (typeRep @(Term t)) <$> use defaultRules) >>= \case
+  Nothing -> defaultRules %= TM.insert (typeRep @(Term t))
+    (DefaultRule (typeRep @e) (typeRep @(IntBindT m)) [r] :: DefaultRule t)
+  Just (DefaultRule te tm rs) -> maybe (panic "unreachable") id $ do
+    HRefl <- eqTypeRep te (typeRep @e)
+    HRefl <- eqTypeRep tm (typeRep @(IntBindT m))
+    pure $ defaultRules %= TM.insert (typeRep @(Term t))
+           (DefaultRule te (typeRep @(IntBindT m)) (r:rs) :: DefaultRule t)
+
+getAllTerms :: forall m t. (BSMTC m t) => BSM m [TermID t]
+getAllTerms = (TM.lookup (typeRep @(Term t)) . getTermMap . (getTMap :: TMap -> TermMap t) <$> use terms_) >>= \case
+  Nothing -> pure []
+  Just hm -> pure $ HM.keys hm
 
 getRepresentative :: TermID t -> BSM m (TermID t)
 getRepresentative = undefined
@@ -536,7 +580,7 @@ runRule :: ()
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule = undefined
 
-insertRule :: RuleIB m () -> RuleMeta -> BSM m RuleID
+insertRule :: RuleMeta -> RuleIB m () -> BSM m RuleID
 insertRule = undefined
 
 lookupRule :: RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))

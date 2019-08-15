@@ -176,6 +176,7 @@ type MonadUnify e m t
     , MonadAssume e m t
     , MonadProperties e m
     , JoinSemiLattice1 e t
+    , Newtype (Var m t) Int
     , Var m ~ Var (Rule m)
     )
 

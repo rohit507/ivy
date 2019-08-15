@@ -43,7 +43,7 @@ import Control.Concurrent.Supply
 type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e)
-type BSMC m = (Monad m)
+type BSMC m = (Monad m, Typeable m)
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
 type BSMTC m t = (BSMC m, BSTC t, Newtype (Var (IntBindT m) t) Int)
 type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
@@ -170,10 +170,10 @@ instance Typeable t => At (TermMap t) where
               TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mempty) x
 
 data DefaultRule (t :: Type -> Type) where
-  DefaultRule :: (MonadRule e m, MonadBind e t m)
+  DefaultRule :: (MonadRule e m, MonadBind e m t)
               => TypeRep e
               -> TypeRep m
-              -> (Var m t -> Rule m ())
+              -> [Var m t -> Rule m ()]
               -> DefaultRule t
 
 data RMap
@@ -188,7 +188,7 @@ data BindingState = BindingState
   , _rules         :: HashMap RuleID RuleState
   , _dependencies  :: AdjacencyMap ExID
   , _ruleHistories :: HashMap RuleID RuleHistories
-  , _defaultRule   :: RuleMap
+  , _defaultRules  :: RuleMap
   , _assertions    :: Assertions UnivID
   }
 
