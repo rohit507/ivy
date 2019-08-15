@@ -66,7 +66,7 @@ instance (BSEMTC e m t)
   type Var (IntBindT m) = VarID (IntBindT m)
 
   freeVar :: IntBindT m (VarIB m t)
-  freeVar = IntBindT $ force @(VarIB m t) <$> freeVarS
+  freeVar = IntBindT $ force @(VarIB m t) <$> (freeVarS @m @t)
 
   lookupVar :: VarIB m t -> IntBindT m (Maybe (t (VarIB m t)))
   lookupVar
@@ -79,7 +79,7 @@ instance (BSEMTC e m t)
   bindVar v t = IntBindT $ force <$> (bindVarS (force v) $ map force t)
 
   redirectVar :: VarIB m t -> VarIB m t -> IntBindT m (VarIB m t)
-  redirectVar a b = IntBindT $ force <$> redirectVarS (force a) (force b)
+  redirectVar a b = IntBindT $ force <$> redirectVarS @m @t (force a) (force b)
 
   freshenVar :: VarIB m t -> IntBindT m (VarIB m t)
   freshenVar a = IntBindT $ force <$> getRepresentative (force a)
@@ -126,8 +126,8 @@ redirectVarS old new = do
     let to' = toExID o'
         tn' = toExID n'
     -- Move depends from old to new
-    getDependencies to' >>= traverse_ (manageDependencies to' tn')
-    getDependents   tn' >>= traverse_ (manageDependents   to' tn')
+    getDependencies @m @t to' >>= traverse_ (manageDependencies to' tn')
+    getDependents   @m @t tn' >>= traverse_ (manageDependents   to' tn')
     to' `dependsOn` tn'
     lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
@@ -235,7 +235,7 @@ getPropertyPairsS f mappend mempty a b = do
           -> ()
           -> BSM m (Maybe a)
     thisOp rma p _ = sequenceA $ do
-      (PropRel te  tp  to  t  v ) <- TM.lookup (typeRep @p) rma
+      (PropRel te  tp  to  _  v ) <- TM.lookup (typeRep @p) rma
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
       HRefl <- eqTypeRep to (typeRep @t)
@@ -247,7 +247,7 @@ getPropertyPairsS f mappend mempty a b = do
           -> ()
           -> BSM m (Maybe a)
     thatOp rmb p _ = sequenceA $ do
-      (PropRel te  tp  to  t  v ) <- TM.lookup (typeRep @p) rmb
+      (PropRel te  tp  to  _  v ) <- TM.lookup (typeRep @p) rmb
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
       HRefl <- eqTypeRep to (typeRep @t)
@@ -256,13 +256,13 @@ getPropertyPairsS f mappend mempty a b = do
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeEqual a b (IntBindT m) = IntBindT $ assumeEqualS (force a) (force b) m
+  assumeEqual a b (IntBindT m) = IntBindT $ assumeEqualS @_ @_ @t (force a) (force b) m
 
   assumeUnified :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeUnified a b (IntBindT m) = IntBindT $ assumeUnifiedS (force a) (force b) m
+  assumeUnified a b (IntBindT m) = IntBindT $ assumeUnifiedS @_ @_ @t (force a) (force b) m
 
   assumeSubsumed :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
-  assumeSubsumed a b (IntBindT m) = IntBindT $ assumeSubsumedS (force a) (force b) m
+  assumeSubsumed a b (IntBindT m) = IntBindT $ assumeSubsumedS @_ @_ @t (force a) (force b) m
 
   assertEqual :: VarIB m t -> VarIB m t -> IntBindT m ()
   assertEqual a b = IntBindT $ assertions %= addEqAssertion (force a) (force b)
