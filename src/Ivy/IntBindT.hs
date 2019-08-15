@@ -575,11 +575,12 @@ getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
 
 -- | given an initial rule, run a single step and return all the (potentially
---   new) rule
+--   new) rule.
 runRule :: ()
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule = undefined
 
+-- | History aware lookup of rules.
 insertRule :: RuleMeta -> RuleIB m () -> BSM m RuleID
 insertRule = undefined
 
