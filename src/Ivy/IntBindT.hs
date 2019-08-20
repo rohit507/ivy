@@ -34,6 +34,8 @@ import qualified Data.HashSet as HS
 import qualified GHC.Base (Functor, fmap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
+import qualified Data.Set as S
+
 
 import Data.Partition (Partition)
 import qualified Data.Partition as P
@@ -126,8 +128,8 @@ redirectVarS old new = do
     let to' = toExID o'
         tn' = toExID n'
     -- Move depends from old to new
-    getDependencies @m @t to' >>= traverse_ (manageDependencies to' tn')
-    getDependents   @m @t tn' >>= traverse_ (manageDependents   to' tn')
+    getDependencies @m to' >>= traverse_ (manageDependencies to' tn')
+    getDependents   @m tn' >>= traverse_ (manageDependents   to' tn')
     to' `dependsOn` tn'
     lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
@@ -529,30 +531,60 @@ getAllTerms = (TM.lookup (typeRep @(Term t)) . getTermMap . (getTMap :: TMap -> 
   Nothing -> pure []
   Just hm -> pure $ HM.keys hm
 
-getRepresentative :: TermID t -> BSM m (TermID t)
-getRepresentative = undefined
+getRepresentative :: forall m t. (BSMTC m t) => TermID t -> BSM m (TermID t)
+getRepresentative t = use (terms . at @(TermMap t) t) >>= \case
+  Nothing -> panic "should be impossible to generate uninstanciated termID"
+  Just (Forwarded t') -> do
+    rep <- getRepresentative t'
+    (terms . at @(TermMap t) t) .= Just (Forwarded rep)
+    pure rep
+  Just _ -> pure t
 
-getDependents :: forall m t. (BSMTC m t) => ExID -> BSM m (HashSet ExID)
-getDependents = undefined
+getDependents :: forall m. (BSMC m) => ExID -> BSM m (HashSet ExID)
+getDependents a = HS.fromList . S.toList . G.postSet a <$> use dependencies
 
-getDependencies :: forall m t. (BSMTC m t) => ExID -> BSM m (HashSet ExID)
-getDependencies = undefined
+getDependencies :: forall m. (BSMC m) => ExID -> BSM m (HashSet ExID)
+getDependencies a = HS.fromList . S.toList . G.preSet a <$> use dependencies
 
 dependsOn :: forall m. (BSMC m) => ExID -> ExID -> BSM m ()
-a `dependsOn` b = undefined
+a `dependsOn` b = dependencies %= G.overlay (G.edge b a)
 
 doesNotDependOn :: forall m. (BSMC m) => ExID -> ExID -> BSM m ()
-a `doesNotDependOn` b = undefined
+a `doesNotDependOn` b = dependencies %= G.removeEdge b a
 
 setTermValue :: forall m t. (BSMTC m t) => TermID t -> Maybe (t (TermID t)) -> BSM m ()
-setTermValue = undefined
+setTermValue t v = do
+  t' <- getRepresentative t
+  use (terms . at @(TermMap t) t') >>= \case
+    Nothing -> panic "unreachable"
+    Just (Bound s) ->
+      (terms . at @(TermMap t) t') .= (Just $ Bound (set termValue v s))
+    Just _ -> panic "unreachable"
 
 pushUpdates :: forall m. (BSMC m) => ExID -> BSM m ()
-pushUpdates = undefined
+pushUpdates e = do
+  case e of
+    (RID r) -> triggerRule r
+    _ -> pure ()
+  traverse_ pushUpdates =<< getDependents @m e
 
+getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
+  => t a -> t b -> Either e [(a,b)]
+getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
+
+-- | Go through all the relations of term a and redirect them to the corresponding
+--   relations for term b. Return whether changes were made.
+--
+--   This mostly assumes that unification and redirection of the relations
+--   before hand. It only redirects.
 redirectRelations :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 redirectRelations = undefined
 
+-- | traverse the rule histories unifying the two terms, and turning any
+--   conflicts into redirections. Return if changes where made.
+--
+--   This will assume that two rules with the same history are functionally
+--   identical.
 redirectRules :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 redirectRules = undefined
 
@@ -563,13 +595,6 @@ setProperty = undefined
 getProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
             => p -> TermID t -> BSM m (Maybe (TermID t'))
 getProperty = undefined
-
-inSubsumedSet :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-inSubsumedSet = undefined
-
-getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
-  => t a -> t b -> Either e [(a,b)]
-getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
 getPropMap = undefined
@@ -590,8 +615,10 @@ lookupRule = undefined
 lookupRuleHistory :: RuleHistory -> BSM m (Maybe RuleID)
 lookupRuleHistory = undefined
 
+-- | Lookup and run the relevant rule
 triggerRule :: RuleID -> BSM m ()
 triggerRule = undefined
 
+-- | Within a rule assert that some term is being watched.
 addToWatched :: TermID t -> RTIB m ()
 addToWatched = undefined
