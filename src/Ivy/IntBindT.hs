@@ -577,8 +577,24 @@ getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 --
 --   This mostly assumes that unification and redirection of the relations
 --   before hand. It only redirects.
-redirectRelations :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-redirectRelations = undefined
+redirectRelations :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m Bool
+redirectRelations o n = getPropertyPairsS f' mappendM' False o n
+
+  where
+
+      f' :: (forall t' p. (Property p t t', BSEMTC e m t')
+                    => p -> These (TermID t') (TermID t') -> BSM m Bool)
+      f' _ (That _) = pure False
+      f' p (This o') = do
+        setProperty p n o'
+        pure False
+      f' p (These o' n') = do
+        redirectVarS o' n'
+        pure True
+
+      mappendM' :: Bool -> Bool -> BSM m Bool
+      mappendM' a b = pure $ a || b
+
 
 -- | traverse the rule histories unifying the two terms, and turning any
 --   conflicts into redirections. Return if changes where made.
@@ -586,7 +602,27 @@ redirectRelations = undefined
 --   This will assume that two rules with the same history are functionally
 --   identical.
 redirectRules :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-redirectRules = undefined
+redirectRules old new = undefined
+
+  where
+
+    -- | If there are old and new members, we redirect them and merge their
+    --   subtrees.
+    mergeRuleHistories :: TermID t -> TermID t -> HashMap UnivID RuleHistories
+                       -> BSM m (Bool, HashMap UnivID RuleHistories)
+    mergeRuleHistories o n hm = do
+      let mo = HM.lookup (force o) hm
+          mn = HM.lookup (force n) hm
+          mom = join . map (^. term) $ mo
+          mnm = join . map (^. term) $ mn
+          mons = join . map (^. nextStep) $ mo
+          mnns = join . map (^. nextStep) $ mn
+      undefined
+
+    -- | redirect a single rule
+    redirectRule :: RuleID -> RuleID -> BSM m Bool
+    redirectRule = undefined
+
 
 setProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
             => p -> TermID t -> TermID t' -> BSM m ()

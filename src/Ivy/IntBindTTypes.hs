@@ -224,7 +224,7 @@ data RuleState where
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
 data RuleHistories = RuleHistories
-  { _family :: RuleID
+  { _term :: Maybe RuleID
   , _nextStep :: HashMap UnivID RuleHistories }
   deriving (Eq, Ord, Show)
 
@@ -281,6 +281,8 @@ makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config
 makeFieldsNoPrefix ''BindingState
 makeFieldsNoPrefix ''RuleState
+makeFieldsNoPrefix ''RuleHistory
+makeFieldsNoPrefix ''RuleHistories
 makeFieldsNoPrefix ''BoundState
 makeFieldsNoPrefix ''RuleMeta
 -- makePrisms ''RuleState
