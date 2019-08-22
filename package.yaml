@@ -35,6 +35,8 @@ dependencies:
   - newtype
   - algebraic-graphs
   - logging
+  - mmorph
+  - prettyprinter
   - data-partition
 
 library:

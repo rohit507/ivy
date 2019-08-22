@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 {-|
 Module      : Ivy.Prelude
 Description : The prelude we use throughout this library
@@ -25,23 +27,37 @@ module Ivy.Prelude (
 ) where
 
 import Intro hiding (Item)
+import qualified Text.Show as S
+import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
+import qualified Data.TypeMap.Dynamic as TM
 import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)
 import Data.Bifoldable as P
 import Data.Bitraversable as P
-import Data.Functor.Foldable as P hiding (fold)
+import Data.Functor.Foldable as P hiding (fold, embed, hoist)
 import Data.Functor.Foldable.TH as P
 import Data.Functor.Classes as P (liftEq)
 import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
-import Control.Monad.Free.Church as P
+import Hedgehog as P (showsPrec1)
+-- import Control.Monad.Free.Church as P
+import Control.Monad.Morph as P
 import Control.Newtype as P
 import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
-import Data.These as P hiding (swap)
+import Data.These as P
 import Data.Constraint.Unsafe
+
+
+instance (Show a) => Show (TypeMap (OfType a)) where
+  show tm = "(empty" <> mconcat (TM.toList @String (TM.map printMember tm)) <> ")"
+    where
+      printMember :: forall t. Typeable t => Proxy t -> a -> String
+      printMember p a = " <: (" <> show p <> ", " <> show a <> ")"
+
+
 
 errEq :: forall e e' m. (MonadError e m, MonadError e' m) :- (e ~ e')
 errEq = unsafeCoerceConstraint
@@ -149,3 +165,10 @@ instance Foldable f => Foldable ((::=) f) where
 instance Traversable f => Traversable ((::=) f) where
   sequenceA (a ::= b) = flip (::=) <$> sequenceA b <*> a
 -}
+
+
+instance (Monoid w) => MFunctor (RWST r w s) where
+    hoist nat m = rwsT (\r s -> nat (runRWST m r s))
+
+instance (Monoid w) => MFunctor (WriterT w) where
+    hoist nat m = writerT (nat (runWriterT m))

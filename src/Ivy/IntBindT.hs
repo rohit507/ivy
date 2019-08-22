@@ -56,6 +56,8 @@ deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
 deriving newtype instance (Monad m) => Monad (IntBindT m)
 deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
+deriving newtype instance (MonadIO m) => MonadIO (IntBindT m)
+
 
 instance MonadTrans IntBindT where
   lift = IntBindT . lift
@@ -111,7 +113,7 @@ bindVarS :: forall m t. (BSMTC m t) => TermID t -> t (TermID t) -> BSM m (TermID
 bindVarS v t = do
   mot <- lookupVarS v
   nt  <- freshenTerm t
-  whenJust mot $ \ ot -> do
+  whenJust mot $ \ ot -> trace "D" $ do
     let otd = foldMap (HS.singleton . toExID) ot
         ntd = foldMap (HS.singleton . toExID) nt
         tv = toExID v
@@ -478,7 +480,7 @@ instance (MonadError e m) => MonadRule e (RuleT m) where
   type Rule (RuleT m) = RuleT m
   addRule = id
 
-newIdent :: forall o m s. (MonadState s m, HasSupply s Supply, Newtype o Int)
+newIdent :: forall o m s. (Show o, MonadState s m, HasSupply s Supply, Newtype o Int)
          => m o
 newIdent = map pack $ supply %%= freshId
 

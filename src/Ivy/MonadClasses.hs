@@ -57,6 +57,7 @@ class ( Typeable t
       , Traversable t
       , Eq1 t
       , Monad m
+      , Show (Var m t)
       , Hashable (Var m t)
       , Ord (Var m t)
       , MonadError e m)
@@ -85,6 +86,11 @@ class ( Typeable t
   --
   --   after two calls to freshen var, two terms should be unified only if they're
   freshenVar :: Var m t -> m (Var m t)
+
+newVar :: (MonadBind e m t) => t (Var m t) -> m (Var m t)
+newVar t = do
+  v <- freeVar
+  bindVar v t
 
 -- | Properties are singleton types which reference some functional relation
 --   between terms.
@@ -192,7 +198,7 @@ recBinOpF BinOpContext{..} = \ recurse ctxt inputs ->
   flip maybeM (check ctxt inputs) $ do
     ctxt' <- update ctxt inputs
     subterm :: Maybe b <- assume inputs $
-        bitraverseThese (lookupVar @e) (lookupVar @e) inputs >>= \case
+        bitraverse (lookupVar @e) (lookupVar @e) inputs >>= \case
         --
         This Nothing   -> nothingCase
         This (Just ta) -> thisCase (recurse ctxt') ta

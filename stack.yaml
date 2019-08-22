@@ -17,7 +17,8 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-13.18
+# resolver: lts-13.18
+resolver: lts-14.2
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -33,20 +34,20 @@ resolver: lts-13.18
 #  - auto-update
 #  - wai
 packages:
-- .
+  - .
+
 # Dependency packages to be pulled from upstream that are not in the resolver
 # using the same syntax as the packages field.
 # (e.g., acme-missiles-0.3)
 
 extra-deps:
+  - mmorph/
   - intro-0.5.2.1
   - writer-cps-mtl-0.1.1.6
   - logging-3.0.5
   - writer-cps-transformers-0.5.6.0
-  - tasty-hedgehog-0.2.0.0
   - type-map-0.1.6.0
   - data-partition-0.3.0.0
-
 # Override default flag values for local packages and extra-deps
 # flags: {}
 
@@ -73,7 +74,7 @@ extra-deps:
 
 build:
   #library-profiling: true
-  #executable-profiling: true
+  executable-profiling: true
   #copy-bins: false
   #prefetch: false
   #keep-going: false

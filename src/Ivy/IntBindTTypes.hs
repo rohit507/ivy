@@ -22,6 +22,7 @@ import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.Assertions
 
+import qualified Text.Show as S
 import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
 import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
@@ -160,7 +161,7 @@ type instance IxValue (TermMap t) = TermState t
 
 instance (Typeable t) => Ixed (TermMap t)
 
-instance Typeable t => At (TermMap t) where
+instance (Typeable t) => At (TermMap t) where
   at :: TermID t -> Lens' (TermMap t) (Maybe (TermState t))
   at tid = lens getter (flip fsetter)
     where
@@ -174,9 +175,9 @@ instance Typeable t => At (TermMap t) where
       fsetter mts (TermMap x)
         = TermMap $ case TM.lookup (typeRep @(Term t)) x of
             Just mt ->
-              TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mt) x
+              TM.update (typeRep @(Term t)) (Just . HM.update (const mts) tid) x
             Nothing ->
-              TM.insert (typeRep @(Term t)) (HM.update (const mts) tid mempty) x
+              TM.insert (typeRep @(Term t)) (HM.alter (const mts) tid mempty) x
 
 data DefaultRule (t :: Type -> Type) where
   DefaultRule :: (MonadRule e m, MonadBind e m t)
@@ -210,6 +211,9 @@ data TermState t where
   Forwarded :: { _target :: TermID t } -> TermState t
   Bound :: { _boundState :: BoundState t } -> TermState t
 
+deriving instance Show (t (TermID t)) => Show (BoundState t)
+deriving instance Show (t (TermID t)) => Show (TermState t)
+
 freeBoundState :: BoundState t
 freeBoundState = BoundState Nothing TM.empty
 
@@ -220,6 +224,8 @@ freeTermState = Bound freeBoundState
 data PropRel where
   PropRel :: forall e p t t'. (BSETC e t, BSETC e t', Property p t t')
     => TypeRep e -> TypeRep p -> TypeRep t -> TypeRep t' -> TermID t' -> PropRel
+
+deriving instance Show PropRel
 
 type PropMap = TypeMap (OfType PropRel)
 
@@ -238,6 +244,9 @@ newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
 runIntBindT :: Config -> Supply -> IntBindT m a -> m (a, BindingState, ())
 runIntBindT c s = (\ m -> runRWST m (initialContext c) (initialBindingState s)) . getIntBindT
+
+instance MFunctor IntBindT where
+  hoist f (IntBindT m) = IntBindT $ hoist f m
 
 data RuleHistories = RuleHistories
   { _term :: Maybe RuleID
@@ -274,7 +283,7 @@ type RuleIB m = Rule (IntBindT m)
 --            continuation monad and a free monad. See if there's
 --            someway to refactor into those.
 data RuleT m a where
-  RLook :: (MonadBind e m t, Eq1 t)
+  RLook :: (MonadBind e m t, Eq1 t, BSTC t)
     => { _type :: TypeRep t
        , _var :: Var m t
        , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
