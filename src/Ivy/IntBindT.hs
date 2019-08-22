@@ -23,27 +23,27 @@ import Ivy.MonadClasses
 import Ivy.IntBindTTypes
 import Ivy.Assertions
 
-import Data.Bimap (Bimap)
-import qualified Data.Bimap as BM
-import Data.TypeMap.Dynamic (TypeMap, Item, OfType)
+-- import Data.Bimap (Bimap)
+-- import qualified Data.Bimap as BM
+import Data.TypeMap.Dynamic (TypeMap, OfType)
 import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
-import qualified GHC.Base (Functor, fmap)
-import Algebra.Graph.AdjacencyMap (AdjacencyMap)
+import qualified GHC.Base (fmap)
+-- import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 import qualified Data.Set as S
 
 
-import Data.Partition (Partition)
-import qualified Data.Partition as P
+-- import Data.Partition (Partition)
+-- import qualified Data.Partition as P
 
 import qualified Control.Monad.Fail (fail)
 import Control.Monad (ap)
-import Data.IORef
-import Control.Concurrent.Supply
+-- import Data.IORef
+-- import Control.Concurrent.Supply
 
 deriving newtype instance (Functor m) => Functor (IntBindT m)
 deriving newtype instance (Monad m) => Applicative (IntBindT m)
