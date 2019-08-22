@@ -20,7 +20,8 @@ module Ivy.IntBindT
   , addDefaultRule
   ) where
 
-import Ivy.Prelude hiding (IntSet, IntMap)
+import Intro hiding (Item)
+import Ivy.Prelude
 -- import Control.Lens hiding (Context)
 -- import Control.Lens.TH
 

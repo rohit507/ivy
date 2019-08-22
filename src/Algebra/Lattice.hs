@@ -11,6 +11,7 @@ Portability : POSIX
 module Algebra.Lattice where
 
 import Ivy.Prelude
+import Intro hiding (Item)
 
 
 -- | A basic class for defining a partial order. Should be consistent with

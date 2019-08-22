@@ -13,7 +13,8 @@ Portability : POSIX
 
 module Ivy.Assertions where
 
-import Ivy.Prelude hiding (IntSet, IntMap)
+import Intro hiding (Item)
+import Ivy.Prelude
 
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM

@@ -24,7 +24,7 @@ module Ivy.Prelude (
   , errEq
 ) where
 
-import Intro as P hiding (Item)
+import Intro hiding (Item)
 import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)

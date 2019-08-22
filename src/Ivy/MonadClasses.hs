@@ -13,6 +13,7 @@ Portability : POSIX
 
 module Ivy.MonadClasses where
 
+import Intro hiding (Item)
 import Ivy.Prelude
 import Algebra.Lattice
 -- import qualified Data.Text as Text

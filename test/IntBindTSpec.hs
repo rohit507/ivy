@@ -13,6 +13,9 @@ Portability : POSIX
 
 module IntBindTSpec where
 
+import Intro hiding (Item)
+import Hedgehog
+import qualified Hedgehog.Gen as Gen
 import Ivy.Prelude
 import Algebra.Lattice
 import Ivy.MonadClasses
