@@ -54,6 +54,7 @@ import Data.Monoid (All, getAll)
 --   another.
 class ( Typeable t
       , Traversable t
+      , Eq1 t
       , Monad m
       , Hashable (Var m t)
       , Ord (Var m t)

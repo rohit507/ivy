@@ -81,10 +81,10 @@ instance (BSEMTC e m t)
   bindVar v t = IntBindT $ force <$> (bindVarS (force v) $ map force t)
 
   redirectVar :: VarIB m t -> VarIB m t -> IntBindT m (VarIB m t)
-  redirectVar a b = IntBindT $ force <$> redirectVarS @m @t (force a) (force b)
+  redirectVar a b = IntBindT $ force <$> redirectVarS @e @m @t (force a) (force b)
 
   freshenVar :: VarIB m t -> IntBindT m (VarIB m t)
-  freshenVar a = IntBindT $ force <$> getRepresentative (force a)
+  freshenVar a = IntBindT $ force <$> getRepresentative (force @(TermID t) a)
 
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
@@ -120,7 +120,7 @@ bindVarS v t = do
     $ pushUpdates (toExID v)
   getRepresentative v
 
-redirectVarS :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m (TermID t)
+redirectVarS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m (TermID t)
 redirectVarS old new = do
   o' <- getRepresentative old
   n' <- getRepresentative new
@@ -133,7 +133,7 @@ redirectVarS old new = do
     to' `dependsOn` tn'
     lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
-    dirty  <- (||) <$> redirectRelations o' n' <*> redirectRules o' n'
+    dirty  <- (||) <$> redirectRelations @e o' n' <*> redirectRules o' n'
     when dirty $ pushUpdates tn'
   getRepresentative n'
 
@@ -154,12 +154,12 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m, Typeable p)
       => p -> VarIB m t -> IntBindT m (VarIB m t')
   propertyOf p var = IntBindT $ force <$> propertyOfS p (force var)
 
-propertyOfS :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
+propertyOfS :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
             => p -> TermID t -> BSM m (TermID t')
-propertyOfS p v = getProperty p v >>= \case
+propertyOfS p v = getProperty @e p v >>= \case
   Nothing -> do
     r :: TermID t' <- freeVarS
-    setProperty p v r
+    setProperty @e p v r
     pure r
   Just r -> pure r
 
@@ -334,10 +334,10 @@ instance (Monad m) => Monad (RuleT m) where
 
 -- | Pull out one layer of the rule as an action we can run, recurse on
 --   lift operations.
-evalRule :: forall a m. (Monad m) => RuleIB m a -> RTIB m [RuleIB m a]
+evalRule :: forall a m. (BSMC m) => RuleIB m a -> RTIB m [RuleIB m a]
 evalRule (RLook _ v k) = do
-  addToWatched (force v)
-  lift (lookupVar v) >>= (map pure . k)
+  addToWatched (forceTID v)
+  lift (lookupVar $ force v) >>= (map pure . k)
 
 evalRule (RLift as) = map mconcat . traverse evalRule =<< as
 
@@ -588,7 +588,7 @@ redirectRelations o n = getPropertyPairsS f' mappendM' False o n
       f' p (This o') = do
         setProperty p n o'
         pure False
-      f' p (These o' n') = do
+      f' _ (These o' n') = do
         redirectVarS o' n'
         pure True
 
@@ -602,59 +602,161 @@ redirectRelations o n = getPropertyPairsS f' mappendM' False o n
 --   This will assume that two rules with the same history are functionally
 --   identical.
 redirectRules :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
-redirectRules old new = undefined
+redirectRules o n = do
+  rh <- use ruleHistories
+  res <- traverse mergeRuleHistories rh
+  ruleHistories .= map snd res
+  pure (foldr (||) False . map fst $ res)
 
   where
 
     -- | If there are old and new members, we redirect them and merge their
     --   subtrees.
-    mergeRuleHistories :: TermID t -> TermID t -> HashMap UnivID RuleHistories
-                       -> BSM m (Bool, HashMap UnivID RuleHistories)
-    mergeRuleHistories o n hm = do
-      let mo = HM.lookup (force o) hm
-          mn = HM.lookup (force n) hm
-          mom = join . map (^. term) $ mo
-          mnm = join . map (^. term) $ mn
-          mons = join . map (^. nextStep) $ mo
-          mnns = join . map (^. nextStep) $ mn
-      undefined
+    mergeRuleHistMap :: HashMap ExID RuleHistories
+                       -> BSM m (Bool, HashMap ExID RuleHistories)
+    mergeRuleHistMap hm = do
+      let mo = (^. term) =<< HM.lookup (toExID o) hm
+          mn = (^. term) =<< HM.lookup (toExID n) hm
+      d <- fromMaybe False <$> sequenceA (redirectRule <$> mo <*> mn)
+      updates <- traverse mergeRuleHistories hm
+      let dirty  = d || (foldr (||) False . map fst $ updates)
+          result = map snd $ updates
+      pure (dirty, result)
 
-    -- | redirect a single rule
+
+    mergeRuleHistories ::  RuleHistories -> BSM m (Bool, RuleHistories)
+    mergeRuleHistories (RuleHistories t ns) = do
+      (d, ns') <- mergeRuleHistMap ns
+      t' <- traverse getRuleRep t
+      pure (d, RuleHistories t' ns')
+
+
+    -- | redirect a single rule, just updates things.
     redirectRule :: RuleID -> RuleID -> BSM m Bool
-    redirectRule = undefined
+    redirectRule o n = do
+      o' <- getRuleRep o
+      n' <- getRuleRep n
+      if (o' == n')
+      then (pure False)
+      else ((rules . at o .= Just (Merged n)) *> pure True)
 
 
-setProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
+setProperty :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
             => p -> TermID t -> TermID t' -> BSM m ()
-setProperty = undefined
+setProperty _ term prop = do
+  term' <- getRepresentative term
+  prop' <- getRepresentative prop
+  (terms . at @(TermMap t) term') %= \case
+    Nothing -> panic "unreachable"
+    Just (Forwarded _) -> panic "unreachable"
+    Just (Bound bs) -> Just . Bound $ (properties %~ (TM.insert (typeRep @p)
+        (PropRel (typeRep @e) (typeRep @p) (typeRep @t) (typeRep @t') prop'))) bs
 
-getProperty :: forall p m t t'. (Property p t t', BSMTC m t, BSMTC m t')
+getProperty :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
             => p -> TermID t -> BSM m (Maybe (TermID t'))
-getProperty = undefined
+getProperty _ term = do
+  res <- TM.lookup (typeRep @p) <$> getPropMap term
+  o <- pure $ res >>= \ (PropRel te tp tt tt' tid) -> do
+    HRefl <- eqTypeRep te (typeRep @e)
+    HRefl <- eqTypeRep tp (typeRep @p)
+    HRefl <- eqTypeRep tt (typeRep @t)
+    HRefl <- eqTypeRep tt' (typeRep @t')
+    pure tid
+  sequenceA $ getRepresentative <$> o
 
 getPropMap :: forall m t. (BSMTC m t) => TermID t -> BSM m PropMap
-getPropMap = undefined
+getPropMap t = do
+  t' <- getRepresentative t
+  use (terms . at @(TermMap t) t') >>= \case
+    Nothing -> panic "unreachable"
+    Just (Forwarded _) -> panic "unreachable"
+    Just (Bound bs) -> pure (bs ^. properties)
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule.
-runRule :: ()
+runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
-runRule = undefined
+runRule rm rule = do
+  (rs, ns) <- getIntBindT $  runStateT (evalRule rule) rm
+  pure $ map (\ a -> (ns,a)) rs
 
 -- | History aware lookup of rules.
-insertRule :: RuleMeta -> RuleIB m () -> BSM m RuleID
-insertRule = undefined
+insertRule :: forall m. (BSMC m) => RuleMeta -> RuleIB m () -> BSM m RuleID
+insertRule rm@(RuleMeta hist watch _) rule = do
+  lookupRuleHistory hist >>= \case
+    Just rid -> pure rid
+    Nothing  -> do
+      rid <- newIdent
+      rules . at rid .= Just (Waiting (typeRep @(IntBindT m)) rm rule)
+      for (HS.toList watch) (\ t -> do
+        t' <- getRepExID t
+        (RID rid) `dependsOn` t')
+      hist' <- freshenHist hist
+      ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
+      pure rid
 
-lookupRule :: RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
-lookupRule = undefined
+  where
 
-lookupRuleHistory :: RuleHistory -> BSM m (Maybe RuleID)
-lookupRuleHistory = undefined
+    makeRuleHists :: RuleID -> RuleHistory -> HashMap RuleID RuleHistories
+    makeRuleHists rid (RuleHistory fam steps) = HM.singleton fam (makeFromSteps rid steps)
 
--- | Lookup and run the relevant rule
-triggerRule :: RuleID -> BSM m ()
-triggerRule = undefined
+    makeFromSteps :: RuleID -> [ExID] -> RuleHistories
+    makeFromSteps rid [] = RuleHistories (Just rid) mempty
+    makeFromSteps rid (u:us) = RuleHistories Nothing (HM.singleton u $ makeFromSteps rid us)
 
--- | Within a rule assert that some term is being watched.
-addToWatched :: TermID t -> RTIB m ()
-addToWatched = undefined
+    mergeRuleHistories :: RuleHistories -> RuleHistories -> RuleHistories
+    mergeRuleHistories (RuleHistories f m) (RuleHistories f' m') =
+      RuleHistories (f' <|> f) (HM.unionWith mergeRuleHistories m m')
+
+freshenHist :: forall m. (BSMC m) => RuleHistory -> BSM m RuleHistory
+freshenHist (RuleHistory fam stps) = RuleHistory fam <$> traverse getRepExID stps
+
+getRepExID :: forall m. (BSMC m) => ExID -> BSM m ExID
+getRepExID (RID r) = RID <$> getRuleRep r
+getRepExID (TID tt t) = TID tt <$> getRepresentative t
+
+lookupRule :: forall m. (BSMC m) => RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
+lookupRule r = do
+  r' <- getRuleRep r
+  use (rules . at r') >>= \case
+    Nothing -> panic "unreachable"
+    Just (Merged _) -> panic "unreachable"
+    Just (Waiting tm rm rule) -> pure $ do
+      HRefl <- eqTypeRep tm (typeRep @(IntBindT m))
+      pure (rm, rule)
+
+lookupRuleHistory :: forall m. (BSMC m) => RuleHistory -> BSM m (Maybe RuleID)
+lookupRuleHistory rh@(RuleHistory fam _)
+  = do
+    hist' <- freshenHist rh
+    (>>= (lookupSteps $ hist' ^. nextStep)) <$> use (ruleHistories . at fam)
+
+  where
+
+    lookupSteps :: [ExID] -> RuleHistories -> Maybe RuleID
+    lookupSteps [] (RuleHistories m _) = m
+    lookupSteps (e:es) (RuleHistories _ hm)
+      = HM.lookup e hm >>= lookupSteps es
+
+getRuleRep :: forall m. (BSMC m) => RuleID -> BSM m RuleID
+getRuleRep r = use (rules . at r) >>= \case
+  Nothing -> panic "unreachable"
+  Just (Merged r') -> do
+    r'' <- getRuleRep r'
+    rules . at r .= Just (Merged r'')
+    pure r''
+  Just _ -> pure r
+
+-- | Lookup and run the relevant rule, insert the resulting next steps
+triggerRule :: forall m. (BSMC m) => RuleID -> BSM m ()
+triggerRule rid = lookupRule rid >>= \case
+  Nothing -> panic "unreachable"
+  Just rs -> do
+    results <- uncurry runRule rs
+    traverse_ (uncurry insertRule) results
+
+-- | adds a term to the watchlist and the history
+addToWatched :: forall m t. (BSMTC m t) => TermID t -> RTIB m ()
+addToWatched t = do
+  watched %= HS.insert (toExID t)
+  history . nextStep %= (<> [toExID t])

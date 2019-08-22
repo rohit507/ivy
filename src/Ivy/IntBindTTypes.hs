@@ -133,8 +133,16 @@ data Config = Config
   {
   }
 
+
+initialContext :: Config -> Context
+initialContext c = Context c mempty
+
+
 data Term t
 newtype TMap = TMap { getTMap :: forall t. Typeable t => TermMap t }
+
+emptyTMap :: TMap
+emptyTMap = TMap $ TermMap TM.empty
 
 type instance Item TMap (Term t) = HashMap (TermID t) (TermState t)
 
@@ -179,6 +187,7 @@ data DefaultRule (t :: Type -> Type) where
 data RMap
 type instance Item RMap (Term t) = DefaultRule t
 
+
 type RuleMap = TypeMap RMap
 
 data BindingState = BindingState
@@ -191,6 +200,9 @@ data BindingState = BindingState
   , _defaultRules  :: RuleMap
   , _assertions    :: Assertions UnivID
   }
+
+initialBindingState :: Supply -> BindingState
+initialBindingState s = BindingState s mempty emptyTMap mempty G.empty mempty TM.empty mempty
 
 data TermState t where
 
@@ -205,7 +217,7 @@ freeTermState = Bound freeBoundState
 
 
 data PropRel where
-  PropRel :: forall p e t t'. (BSETC e t, BSETC e t', Property p t t')
+  PropRel :: forall e p t t'. (BSETC e t, BSETC e t', Property p t t')
     => TypeRep e -> TypeRep p -> TypeRep t -> TypeRep t' -> TermID t' -> PropRel
 
 type PropMap = TypeMap (OfType PropRel)
@@ -223,19 +235,22 @@ data RuleState where
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
+runIntBindT :: Config -> Supply -> IntBindT m a -> m (a, BindingState, ())
+runIntBindT c s = (\ m -> runRWST m (initialContext c) (initialBindingState s)) . getIntBindT
+
 data RuleHistories = RuleHistories
   { _term :: Maybe RuleID
-  , _nextStep :: HashMap UnivID RuleHistories }
-  deriving (Eq, Ord, Show)
+  , _nextStep :: HashMap ExID RuleHistories }
+  deriving (Eq, Ord)
 
 data RuleHistory = RuleHistory
   { _family :: RuleID
-  , _nextStep :: [UnivID] }
-  deriving (Eq, Ord, Show)
+  , _nextStep :: [ExID] }
+  deriving (Eq, Ord)
 
 data RuleMeta = RuleMeta
-  { _history    :: RuleHistory
-  , _watched    :: HashSet UnivID
+                { _history    :: RuleHistory
+  , _watched    :: HashSet ExID
   , _assumptions :: Assertions UnivID
   }
 
@@ -258,7 +273,7 @@ type RuleIB m = Rule (IntBindT m)
 --            continuation monad and a free monad. See if there's
 --            someway to refactor into those.
 data RuleT m a where
-  RLook :: (MonadBind e m t)
+  RLook :: (MonadBind e m t, Eq1 t)
     => { _type :: TypeRep t
        , _var :: Var m t
        , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
