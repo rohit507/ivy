@@ -17,3 +17,14 @@ import Ivy.Prelude
 import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.IntBindT
+
+-- TODO :: Basic Test Cases to ensure that propagation, subsumption, and other
+--         key operations are valid.
+--
+--   -- Terms :: Free, Lookup, Bind, Redirect, Freshen?
+--   -- Properties
+--   -- Rule
+--   -- Default Rule
+--   -- Equals
+--   -- Unification
+--   -- Subsumption
