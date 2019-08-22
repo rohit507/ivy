@@ -10,11 +10,21 @@ Portability : POSIX
 
 module Ivy.Prelude (
     module P
-  , (:=)(..)
-  , (::=)(..)
+  , modifyError
+  , listens
+  , censor
+  , maybeM
+  , liftEither
+  , whenJust
+  , matchType
+  , matchType2
+  , mappendMaybe
+  , mappendMaybes
+  , force
+  , errEq
 ) where
 
-import Intro as P
+import Intro as P hiding (Item)
 import Type.Reflection as P
 import Data.Dynamic as P
 import Data.Constraint as P hiding (top)
@@ -22,10 +32,82 @@ import Data.Bifoldable as P
 import Data.Bitraversable as P
 import Data.Functor.Foldable as P hiding (fold)
 import Data.Functor.Foldable.TH as P
+import Data.Functor.Classes as P (liftEq)
+import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Control.Monad.Free.Church as P
-import GHC.Exts as P (fromListN)
+import Control.Newtype as P
+import GHC.TypeLits as P
+import Control.Concurrent.Supply as P
+import Control.Lens as P hiding (para, under, over, op, ala, Context)
+import Data.These as P hiding (swap)
+import Data.Constraint.Unsafe
 
+errEq :: forall e e' m. (MonadError e m, MonadError e' m) :- (e ~ e')
+errEq = unsafeCoerceConstraint
+
+whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
+whenJust Nothing _ = skip
+whenJust (Just a) f = f a
+
+liftEither :: MonadError e m => Either e a -> m a
+liftEither = either throwError pure
+
+-- | Will modify an error if one is thrown, but otherwise leave it alone.
+modifyError :: (MonadError e m) => (e -> e) -> m a -> m a
+modifyError ef m = catchError m (throwError . ef)
+
+-- | @'listens' f m@ is an action that executes the action @m@ and adds
+-- the result of applying @f@ to the output to the value of the computation.
+--
+-- * @'listens' f m = 'liftM' (id *** f) ('listen' m)@
+listens :: MonadWriter w m => (w -> b) -> m a -> m (a, b)
+listens f m = do
+    ~(a, w) <- listen m
+    pure (a, f w)
+
+-- | @'censor' f m@ is an action that executes the action @m@ and
+-- applies the function @f@ to its output, leaving the return value
+-- unchanged.
+--
+-- * @'censor' f m = 'pass' ('liftM' (\\x -> (x,f)) m)@
+censor :: MonadWriter w m => (w -> w) -> m a -> m a
+censor f m = pass $ do
+    a <- m
+    pure (a, f)
+
+mappendMaybes :: (Monoid p) => [Maybe p] -> Maybe p
+mappendMaybes = foldr mappendMaybe (Just mempty)
+
+mappendMaybe :: (Semigroup p) => Maybe p -> Maybe p -> Maybe p
+mappendMaybe a b = (<>) <$> a <*> b
+
+-- | Generalization of `Maybe` to monads
+maybeM :: (Monad m) => m a -> m (Maybe a) -> m a
+maybeM d m = m >>= \case
+  Just a -> pure a
+  Nothing -> d
+
+-- | perform some action if types don't match
+matchType :: forall t t' a. (Typeable t)
+           => TypeRep t' -> a -> (t :~~: t' -> a) -> a
+matchType tr err succ = fromMaybe err $ do
+  h <- eqTypeRep (typeRep @t) tr
+  pure $ succ h
+
+force :: forall b a c. (Newtype a c, Newtype b c) => a -> b
+force = pack . unpack
+
+-- | Matches a pair of types instead of just one.
+matchType2 :: forall t m t' m' a. (Typeable t, Typeable m)
+           => TypeRep t' -> a
+           -> TypeRep m' -> a
+           -> (t :~~: t' -> m :~~: m' -> a)
+           -> a
+matchType2 tt errt tm errm succ =
+  matchType @t tt errt
+    (\ rt -> matchType @m tm errm (\ rm -> succ rt rm))
+{-
 import Data.Functor as B
 
 -- | This is a pair type meant mainly for syntax sugar, `key := val` is to be
@@ -66,3 +148,4 @@ instance Foldable f => Foldable ((::=) f) where
 
 instance Traversable f => Traversable ((::=) f) where
   sequenceA (a ::= b) = flip (::=) <$> sequenceA b <*> a
+-}

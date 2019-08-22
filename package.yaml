@@ -21,18 +21,28 @@ dependencies:
   - tasty-hedgehog
   - hedgehog
   - free
+  - lens
   - containers
+  - monad-control
   - unordered-containers
   - constraints
   - recursion-schemes
   - data-reify
+  - type-map
+  - bimap
+  - these
+  - concurrent-supply
+  - newtype
+  - algebraic-graphs
   - logging
+  - data-partition
 
 library:
   source-dirs: src
   exposed-modules:
     - Ivy.Prelude
-    - Ivy.Scratchpad
+    - Ivy.MonadClasses
+    - Ivy.IntBindT
 
 tests:
   tasty:
@@ -105,6 +115,9 @@ ghc-options:
   # Some of the flags enabled by Wall and propmoted by Werror really should
   # only be warnings when developing. A proper build on the other hand should
   # have no warnings attached
+  - -fno-warn-name-shadowing
+  - -fno-warn-orphans
+  # - -Wwarn=orphans
   - -Wwarn=redundant-constraints
   - -Wwarn=unused-matches
   - -Wwarn=deprecations

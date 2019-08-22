@@ -11,4 +11,9 @@ Portability : POSIX
 
 -}
 
-module SudokuSpec where
+module IntBindTSpec where
+
+import Ivy.Prelude
+import Algebra.Lattice
+import Ivy.MonadClasses
+import Ivy.IntBindT
