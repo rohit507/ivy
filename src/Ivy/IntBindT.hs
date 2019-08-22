@@ -12,13 +12,19 @@ Stability   : experimental
 Portability : POSIX
 -}
 
-module Ivy.IntBindT where
+module Ivy.IntBindT
+  ( BSEMTC
+  , IntBindT()
+  , Config(..)
+  , runIntBindT
+  , addDefaultRule
+  ) where
 
 import Ivy.Prelude hiding (IntSet, IntMap)
 -- import Control.Lens hiding (Context)
 -- import Control.Lens.TH
 
-import Algebra.Lattice
+-- import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.IntBindTTypes
 import Ivy.Assertions
@@ -302,9 +308,6 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => UnivID -> UnivID -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
 
-
-
-
 instance ( forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
          , BSEMC e m)
   => MonadRule e (IntBindT m) where
@@ -568,9 +571,9 @@ pushUpdates e = do
     _ -> pure ()
   traverse_ pushUpdates =<< getDependents @m e
 
-getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
-  => t a -> t b -> Either e [(a,b)]
-getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
+-- getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
+--   => t a -> t b -> Either e [(a,b)]
+-- getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
 
 -- | Go through all the relations of term a and redirect them to the corresponding
 --   relations for term b. Return whether changes were made.

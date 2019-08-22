@@ -15,12 +15,12 @@ module Ivy.MonadClasses where
 
 import Ivy.Prelude
 import Algebra.Lattice
-import qualified Data.Text as Text
+-- import qualified Data.Text as Text
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HS
-import Ivy.Assertions
+-- import qualified Data.HashSet as HS
+-- import Ivy.Assertions
 
-import Data.Monoid (All, getAll)
+-- import Data.Monoid (All, getAll)
 
 -- * These classes are components of a somewhat modified version of
 --   `Control.Unification.BindingMonad` from `unification-fd`. It

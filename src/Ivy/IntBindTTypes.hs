@@ -26,18 +26,18 @@ import qualified Data.TypeMap.Dynamic as TM
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
-import qualified Data.HashSet as HS
-import qualified GHC.Base (Functor, fmap)
+-- import qualified Data.HashSet as HS
+-- import qualified GHC.Base (Functor, fmap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 
-import Data.Partition (Partition)
-import qualified Data.Partition as P
+-- import Data.Partition (Partition)
+-- import qualified Data.Partition as P
 
-import qualified Control.Monad.Fail (fail)
-import Control.Monad (ap)
-import Data.IORef
-import Control.Concurrent.Supply
+-- import qualified Control.Monad.Fail (fail)
+-- import Control.Monad (ap)
+-- import Data.IORef
+-- import Control.Concurrent.Supply
 
 
 type BSM = RWST Context () BindingState
