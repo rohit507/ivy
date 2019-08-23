@@ -19,13 +19,13 @@ module Ivy.Testing where
 
 import Intro hiding (Item)
 import Hedgehog hiding (Var,Property)
-import qualified Hedgehog as H
-import qualified Hedgehog.Gen as Gen
+-- import qualified Hedgehog as H
+-- import qualified Hedgehog.Gen as Gen
 -- import Ivy.Prelude
-import Algebra.Lattice
+-- import Algebra.Lattice
 import Ivy.MonadClasses
-import Ivy.IntBindT
-import Ivy.ErrorClasses
+-- import Ivy.IntBindT
+-- import Ivy.ErrorClasses
 
 instance (MonadBind e m t) => MonadBind e (PropertyT m) t where
   type Var (PropertyT m) = Var m
@@ -35,10 +35,8 @@ instance (MonadBind e m t) => MonadBind e (PropertyT m) t where
   redirectVar a b = lift $ redirectVar a b
   freshenVar a = lift $ freshenVar a
 
-instance (forall t. MonadBind e (PropertyT m) t => MonadBind e m t
-         , MonadProperty e p m)
+instance (MonadProperty e p m)
          => MonadProperty e p (PropertyT m) where
 
-  propertyOf :: (MonadBind e (PropertyT m) (From p), MonadBind e (PropertyT m) (To p), Property p)
-      => p -> Var m (From p) -> PropertyT m (Var m (To p))
+  propertyOf :: p -> Var m (From p) -> PropertyT m (Var m (To p))
   propertyOf a t = lift $ propertyOf @e a t

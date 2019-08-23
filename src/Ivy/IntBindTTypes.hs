@@ -61,8 +61,9 @@ instance Newtype Int Int where
   unpack = id
 
 newtype TermID (t :: Type -> Type) = TermID { getTermID :: Int }
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+  deriving newtype (Eq, Ord, Hashable, NFData)
 
+deriving instance Show (TermID t)
 deriving instance Generic (TermID t)
 
 instance Newtype (TermID t) Int where
@@ -70,8 +71,9 @@ instance Newtype (TermID t) Int where
   unpack = getTermID
 
 newtype VarID m t = VarID { getVarID :: Int }
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+  deriving newtype (Eq, Ord, Hashable, NFData)
 
+deriving instance Show (VarID m t)
 deriving instance Generic (VarID m t)
 
 instance Newtype (VarID m t) Int where
@@ -79,8 +81,9 @@ instance Newtype (VarID m t) Int where
   unpack = getVarID
 
 newtype RuleID = RuleID { getRuleID :: Int }
-  deriving newtype (Eq, Ord, Show, Hashable, NFData)
+  deriving newtype (Eq, Ord, Hashable, NFData)
 
+deriving instance Show RuleID
 deriving instance Generic RuleID
 
 instance Newtype RuleID Int where

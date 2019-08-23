@@ -133,8 +133,57 @@ prt_freshen = do
 hprop_freshen :: H.Property
 hprop_freshen = mkProp $ prt_freshen @_ @_ @(ConstF Int)
 
--- basic property assignment and retrieval
--- property manipulation on red
+data Prop (t :: Type -> Type) = Prop
+
+instance (Typeable t, Typeable (Prop t)) => Property (Prop t) where
+  type From (Prop t) = t
+  type To   (Prop t) = t
+  rep = Prop
+
+prt_property :: forall a e m. (MonadProperty e (Prop (ConstF a)) m, MonadBind e m (ConstF a), EqIsh a, Show a)
+             => Gen a -> PropertyT m ()
+prt_property gen = do
+  a <- ConstF <$> forAll gen
+  v <- freeVar
+  vp :: Var m (ConstF a) <- (Prop @(ConstF a)) `propertyOf` v
+  lookupVar vp >>= (=== Nothing)
+  vp' <- bindVar vp a
+  vp'' <- (Prop @(ConstF a)) `propertyOf` v
+  lookupVar vp >>= (=== Just a)
+  lookupVar vp' >>= (=== Just a)
+  lookupVar vp'' >>= (=== Just a)
+
+hprop_property :: H.Property
+hprop_property = mkProp $ prt_property intGen
+
+
+prt_propertyRedirect :: forall a e m. (MonadProperty e (Prop (ConstF a)) m
+                                     , MonadBind e m (ConstF a)
+                                     , EqIsh a
+                                     , Show a)
+             => Gen a -> PropertyT m ()
+prt_propertyRedirect gen = do
+  c <- ConstF <$> forAll gen
+  va <- freeVar
+  annotateShow va
+  vb <- freeVar
+  annotateShow vb
+  vap <- (Prop @(ConstF a)) `propertyOf` va
+  annotateShow vap
+  vbp <- (Prop @(ConstF a)) `propertyOf` vb
+  annotateShow vbp
+  lookupVar vap >>= (=== Nothing)
+  lookupVar vbp >>= (=== Nothing)
+  bindVar vbp c
+  lookupVar vap >>= (=== Nothing)
+  lookupVar vbp >>= (=== Just c)
+  redirectVar va vb
+  lookupVar vap >>= (=== Just c)
+  lookupVar vbp >>= (=== Just c)
+
+hprop_propertyRedirect :: H.Property
+hprop_propertyRedirect = mkProp $ prt_propertyRedirect intGen
+
 
 type BindM e = IntBindT (ExceptT e IO)
 
