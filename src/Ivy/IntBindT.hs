@@ -198,9 +198,8 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties
       mappendM' a b = getIntBindT $ mappendM a b
 
 
-
 getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
-    => (forall p. (Property p, BSEMTC e m (To p))
+    => (forall p. (From p ~ t, Property p, BSEMTC e m (To p))
                     => p -> These (TermID (To p)) (TermID (To p)) ->BSM m a)
     -> (a -> a -> BSM m a)
     -> a
@@ -215,8 +214,8 @@ getPropertyPairsS f mappend mempty a b = do
       thatMap :: TypeMap (OfType ())
         = TM.difference (TM.map empty pmb) theseMap
   these :: [a] <- catMaybes . TM.toList <$> TM.traverse (theseOp pma pmb) theseMap
-  that  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thatOp pma) thatMap
-  this  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thisOp pma) thisMap
+  that  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thatOp  pma) thatMap
+  this  :: [a] <- catMaybes . TM.toList <$> TM.traverse (thisOp  pma) thisMap
   foldrM mappend mempty $ this <> that <> these
 
   where
@@ -238,6 +237,7 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te te'
       HRefl <- eqTypeRep te (typeRep @e)
+      HRefl <- eqTypeRep (typeRep @(From p)) (typeRep @t)
       pure $ f p (These v v')
 
     thisOp :: forall p. (Typeable p)
@@ -249,6 +249,7 @@ getPropertyPairsS f mappend mempty a b = do
       (PropRel te  tp  v ) <- TM.lookup (typeRep @p) rma
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
+      HRefl <- eqTypeRep (typeRep @(From p)) (typeRep @t)
       pure $ f p (This v)
 
     thatOp :: forall p. (Typeable p)
@@ -260,6 +261,7 @@ getPropertyPairsS f mappend mempty a b = do
       (PropRel te  tp  v ) <- TM.lookup (typeRep @p) rmb
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
+      HRefl <- eqTypeRep (typeRep @(From p)) (typeRep @t)
       pure $ f p (That v)
 
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
@@ -586,7 +588,7 @@ redirectRelations o n = getPropertyPairsS f' mappendM' False o n
 
   where
 
-      f' :: (forall p. (Property p , BSEMTC e m (To p))
+      f' :: (forall p. (From p ~ t, Property p, BSEMTC e m (To p))
                     => p -> These (TermID (To p)) (TermID (To p)) -> BSM m Bool)
       f' _ (That _) = pure False
       f' p (This o') = do

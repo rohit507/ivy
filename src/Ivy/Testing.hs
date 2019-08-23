@@ -39,6 +39,6 @@ instance (forall t. MonadBind e (PropertyT m) t => MonadBind e m t
          , MonadProperty e p m)
          => MonadProperty e p (PropertyT m) where
 
-  propertyOf :: forall t t'. (MonadBind e (PropertyT m) t, MonadBind e (PropertyT m) t', Property p t t')
-      => p -> Var m t -> PropertyT m (Var m t')
+  propertyOf :: (MonadBind e (PropertyT m) (From p), MonadBind e (PropertyT m) (To p), Property p)
+      => p -> Var m (From p) -> PropertyT m (Var m (To p))
   propertyOf a t = lift $ propertyOf @e a t
