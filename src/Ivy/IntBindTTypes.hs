@@ -222,8 +222,8 @@ freeTermState = Bound freeBoundState
 
 
 data PropRel where
-  PropRel :: forall e p t t'. (BSETC e t, BSETC e t', Property p t t')
-    => TypeRep e -> TypeRep p -> TypeRep t -> TypeRep t' -> TermID t' -> PropRel
+  PropRel :: forall e p. (BSETC e (From p), BSETC e (To p), Property p)
+    => TypeRep e -> TypeRep p -> TermID (To p) -> PropRel
 
 deriving instance Show PropRel
 

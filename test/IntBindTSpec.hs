@@ -130,6 +130,12 @@ prt_freshen = do
   va' === vc
   vb' === vc
 
+hprop_freshen :: H.Property
+hprop_freshen = mkProp $ prt_freshen @_ @_ @(ConstF Int)
+
+-- basic property assignment and retrieval
+-- property manipulation on red
+
 type BindM e = IntBindT (ExceptT e IO)
 
 defaultConf :: Config
@@ -156,15 +162,3 @@ withBindM conf = hoist (morph2 . morph)
 
 intGen :: Gen Int
 intGen = Gen.int (Range.linear 0 20)
-
-
--- TODO :: Basic Test Cases to ensure that propagation, subsumption, and other
---         key operations are valid.
---
---   -- Terms :: Free, Lookup, Bind, Redirect, Freshen?
---   -- Properties
---   -- Rule
---   -- Default Rule
---   -- Equals
---   -- Unification
---   -- Subsumption

@@ -160,15 +160,15 @@ redirectVarS old new = do
 instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m, Typeable p)
          => MonadProperty e p (IntBindT m) where
 
-  propertyOf :: (BSEMTC e m t, BSEMTC e m t', Property p t t')
-      => p -> VarIB m t -> IntBindT m (VarIB m t')
+  propertyOf :: (From p ~ t, BSEMTC e m (From p), BSEMTC e m (To p), Property p)
+      => p -> VarIB m t -> IntBindT m (VarIB m (To p))
   propertyOf p var = IntBindT $ force <$> propertyOfS p (force var)
 
-propertyOfS :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
-            => p -> TermID t -> BSM m (TermID t')
+propertyOfS :: forall e p m. (Property p, BSEMTC e m (From p), BSEMTC e m (To p))
+            => p -> TermID (From p) -> BSM m (TermID (To p))
 propertyOfS p v = getProperty @e p v >>= \case
   Nothing -> do
-    r :: TermID t' <- freeVarS
+    r :: TermID (To p) <- freeVarS
     setProperty @e p v r
     pure r
   Just r -> pure r
@@ -177,19 +177,21 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties
 
 
   getPropertyPairs :: forall a t. (MonadBind e (IntBindT m) t)
-      => (forall t' p. (MonadUnify e (IntBindT m) t', MonadProperty e p (IntBindT m), Property p t t')
-                      => p -> These (VarIB m t') (VarIB m t') -> IntBindT m a)
+      => (forall p. (From p ~ t
+                    , MonadUnify e (IntBindT m) (To p)
+                    , MonadProperty e p (IntBindT m), Property p)
+                      => p -> These (VarIB m (To p)) (VarIB m (To p)) -> IntBindT m a)
       -> (a -> a -> IntBindT m a)
       -> a
       -> VarIB m t -> VarIB m t -> IntBindT m a
   getPropertyPairs f mappendM mempty a b
-    = IntBindT $ getPropertyPairsS f' mappendM' mempty (force a) (force b)
+    = IntBindT $ getPropertyPairsS @a @_ @_ @t f' mappendM' mempty (force a) (force b)
 
     where
 
 
-      f' :: (forall t' p. (Property p t t', BSEMTC e m t')
-                    => p -> These (TermID t') (TermID t') ->BSM m a)
+      f' :: (forall p. (From p ~ t, Property p, BSEMTC e m (To p))
+                    => p -> These (TermID (To p)) (TermID (To p)) ->BSM m a)
       f' p t = getIntBindT $ (f p (bimap force force t) :: IntBindT m a)
 
       mappendM' :: a -> a -> BSM m a
@@ -198,11 +200,11 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties
 
 
 getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
-    => (forall t' p. (Property p t t', BSEMTC e m t')
-                    => p -> These (TermID t') (TermID t') ->BSM m a)
+    => (forall p. (Property p, BSEMTC e m (To p))
+                    => p -> These (TermID (To p)) (TermID (To p)) ->BSM m a)
     -> (a -> a -> BSM m a)
     -> a
-    ->TermID t -> TermID t -> BSM m a
+    -> TermID t -> TermID t -> BSM m a
 getPropertyPairsS f mappend mempty a b = do
   pma <- getPropMap a
   pmb <- getPropMap b
@@ -230,27 +232,23 @@ getPropertyPairsS f mappend mempty a b = do
           -> ()
           -> BSM m (Maybe a)
     theseOp rma rmb p _ = sequenceA $ do
-      (PropRel te  tp  to  t  v ) <- TM.lookup (typeRep @p) rma
-      (PropRel te' tp' to' t' v') <- TM.lookup (typeRep @p) rmb
-      HRefl <- eqTypeRep t t'
+      (PropRel te  tp  v ) <- TM.lookup (typeRep @p) rma
+      (PropRel te' tp' v') <- TM.lookup (typeRep @p) rmb
       HRefl <- eqTypeRep tp tp'
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te te'
       HRefl <- eqTypeRep te (typeRep @e)
-      HRefl <- eqTypeRep to to'
-      HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (These v v')
 
-    thisOp :: forall p . (Typeable p)
+    thisOp :: forall p. (Typeable p)
           => PropMap
           -> p
           -> ()
           -> BSM m (Maybe a)
     thisOp rma p _ = sequenceA $ do
-      (PropRel te  tp  to  _  v ) <- TM.lookup (typeRep @p) rma
+      (PropRel te  tp  v ) <- TM.lookup (typeRep @p) rma
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
-      HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (This v)
 
     thatOp :: forall p. (Typeable p)
@@ -259,10 +257,9 @@ getPropertyPairsS f mappend mempty a b = do
           -> ()
           -> BSM m (Maybe a)
     thatOp rmb p _ = sequenceA $ do
-      (PropRel te  tp  to  _  v ) <- TM.lookup (typeRep @p) rmb
+      (PropRel te  tp  v ) <- TM.lookup (typeRep @p) rmb
       HRefl <- eqTypeRep tp (typeRep @p)
       HRefl <- eqTypeRep te (typeRep @e)
-      HRefl <- eqTypeRep to (typeRep @t)
       pure $ f p (That v)
 
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
@@ -449,8 +446,8 @@ instance ( MonadRule e m
          , MonadProperty e p m
          , Var m ~ Var (RuleT m)) => MonadProperty e p (RuleT m) where
 
-  propertyOf :: forall t t'. (MonadBind e (RuleT m) t, MonadBind e (RuleT m) t', Property p t t')
-     => p -> Var (RuleT m) t -> RuleT m (Var (RuleT m) t')
+  propertyOf :: (MonadBind e (RuleT m) (From p), MonadBind e (RuleT m) (To p), Property p)
+     => p -> Var (RuleT m) (From p) -> RuleT m (Var (RuleT m) (To p))
   propertyOf p v = lift $ propertyOf @e p v
 
 instance (MonadProperties e m
@@ -462,8 +459,8 @@ instance (MonadProperties e m
          ) => MonadProperties e (RuleT m) where
 
   getPropertyPairs :: forall a t. (MonadBind e (RuleT m) t)
-      => (forall t' p. (MonadUnify e (RuleT m) t', MonadProperty e p (RuleT m), Property p t t')
-                      => p -> These (Var m t') (Var m t') -> RuleT m a)
+      => (forall p. (From p ~ t, MonadUnify e (RuleT m) (To p), MonadProperty e p (RuleT m), Property p)
+                      => p -> These (Var m (To p)) (Var m (To p)) -> RuleT m a)
       -> (a -> a -> RuleT m a)
       -> a
       -> Var m t -> Var m t -> RuleT m a
@@ -589,8 +586,8 @@ redirectRelations o n = getPropertyPairsS f' mappendM' False o n
 
   where
 
-      f' :: (forall t' p. (Property p t t', BSEMTC e m t')
-                    => p -> These (TermID t') (TermID t') -> BSM m Bool)
+      f' :: (forall p. (Property p , BSEMTC e m (To p))
+                    => p -> These (TermID (To p)) (TermID (To p)) -> BSM m Bool)
       f' _ (That _) = pure False
       f' p (This o') = do
         setProperty p n o'
@@ -648,26 +645,24 @@ redirectRules o n = do
       else ((rules . at o .= Just (Merged n)) *> pure True)
 
 
-setProperty :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
-            => p -> TermID t -> TermID t' -> BSM m ()
+setProperty :: forall e p m. (Property p, BSEMTC e m (From p), BSEMTC e m (To p))
+            => p -> TermID (From p) -> TermID (To p) -> BSM m ()
 setProperty _ term prop = do
   term' <- getRepresentative term
   prop' <- getRepresentative prop
-  (terms . at @(TermMap t) term') %= \case
+  (terms . at @(TermMap (From p)) term') %= \case
     Nothing -> panic "unreachable"
     Just (Forwarded _) -> panic "unreachable"
     Just (Bound bs) -> Just . Bound $ (properties %~ (TM.insert (typeRep @p)
-        (PropRel (typeRep @e) (typeRep @p) (typeRep @t) (typeRep @t') prop'))) bs
+        (PropRel (typeRep @e) (typeRep @p) prop'))) bs
 
-getProperty :: forall e p m t t'. (Property p t t', BSEMTC e m t, BSEMTC e m t')
-            => p -> TermID t -> BSM m (Maybe (TermID t'))
+getProperty :: forall e p m. (Property p, BSEMTC e m (From p), BSEMTC e m (To p))
+            => p -> TermID (From p) -> BSM m (Maybe (TermID (To p)))
 getProperty _ term = do
   res <- TM.lookup (typeRep @p) <$> getPropMap term
-  o <- pure $ res >>= \ (PropRel te tp tt tt' tid) -> do
+  o <- pure $ res >>= \ (PropRel te tp tid) -> do
     HRefl <- eqTypeRep te (typeRep @e)
     HRefl <- eqTypeRep tp (typeRep @p)
-    HRefl <- eqTypeRep tt (typeRep @t)
-    HRefl <- eqTypeRep tt' (typeRep @t')
     pure tid
   sequenceA $ getRepresentative <$> o
 

@@ -94,7 +94,9 @@ newVar t = do
 
 -- | Properties are singleton types which reference some functional relation
 --   between terms.
-class (Typeable p) => Property p t t' | p -> t, p -> t'
+class (Typeable p, Typeable (From p), Typeable (To p)) => Property p where
+  type From p :: * -> *
+  type To p :: * -> *
 
 class (Typeable p, Monad m) => MonadProperty e p m where
 
@@ -104,8 +106,8 @@ class (Typeable p, Monad m) => MonadProperty e p m where
   --   Properties are many-to-one relationships between terms. For instance
   --   many terms can have the same type, but no term can have multiple
   --   types.
-  propertyOf :: forall t t'. (MonadBind e m t, MonadBind e m t', Property p t t')
-      => p -> Var m t -> m (Var m t')
+  propertyOf :: (MonadBind e m (From p), MonadBind e m (To p), Property p)
+      => p -> Var m (From p) -> m (Var m (To p))
 
 -- | This class is only relevant to implementers of a MonadProperty.
 --   Basically, it gives us a way to traverse each of the potential
@@ -113,8 +115,8 @@ class (Typeable p, Monad m) => MonadProperty e p m where
 class MonadProperties e m where
 
   getPropertyPairs :: forall a t. (MonadBind e m t)
-      => (forall t' p. (MonadUnify e m t', MonadProperty e p m, Property p t t')
-                      => p -> These (Var m t') (Var m t') -> m a)
+      => (forall p. (From p ~ t, MonadUnify e m (To p), MonadProperty e p m, Property p)
+                      => p -> These (Var m (To p)) (Var m (To p)) -> m a)
       -> (a -> a -> m a)
       -> a
       -> Var m t -> Var m t -> m a
@@ -324,9 +326,9 @@ unify a b = recBinOp context () (These a b)
     unifyProps :: Var m t -> Var m t -> m ()
     unifyProps a b = getPropertyPairs unifyProp (\ a b -> pure $ a <> b) mempty a b
       where
-        unifyProp :: forall p t'. (MonadUnify e m t', MonadProperty e p m, Property p t t')
-                 => p -> These (Var m t') (Var m t') -> m ()
-        unifyProp _ (These a' b') = unify @e @m @t' a' b' *> skip
+        unifyProp :: forall p. (From p ~ t, MonadUnify e m (To p), MonadProperty e p m, Property p)
+                 => p -> These (Var m (To p)) (Var m (To p)) -> m ()
+        unifyProp _ (These a' b') = unify @e @m @(To p) a' b' *> skip
         unifyProp p (This a') = (unify a' =<< (p `propertyOf` b)) *> skip
         unifyProp _ _ = skip
 
