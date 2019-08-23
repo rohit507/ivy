@@ -26,7 +26,7 @@ import Algebra.Lattice
 import Ivy.MonadClasses
 import Ivy.IntBindT
 import Ivy.ErrorClasses
-import Ivy.Testing
+import Ivy.Testing ()
 
 data ConstF a f where
   ConstF :: a -> ConstF a f
@@ -184,6 +184,11 @@ prt_propertyRedirect gen = do
 hprop_propertyRedirect :: H.Property
 hprop_propertyRedirect = mkProp $ prt_propertyRedirect intGen
 
+-- rules
+-- default rules?
+-- unify
+-- equals
+-- subsume
 
 type BindM e = IntBindT (ExceptT e IO)
 

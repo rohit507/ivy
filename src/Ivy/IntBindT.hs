@@ -168,7 +168,7 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m,
 
 propertyOfS :: forall e p m. (Property p, BSEMTC e m (From p), BSEMTC e m (To p))
             => p -> TermID (From p) -> BSM m (TermID (To p))
-propertyOfS p v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep @p) v >>= \case
+propertyOfS _ v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep @p) v >>= \case
   Nothing -> do
     r :: TermID (To p) <- freeVarS
     setProperty @e (typeRep @p) v r
@@ -596,10 +596,10 @@ redirectRelations o n = {-traceShow ('r',o,n) $-} getPropertyPairsS f' mappendM'
       f' :: (forall p proxy. (From p ~ t, Property p, BSEMTC e m (To p))
                     => proxy p -> These (TermID (To p)) (TermID (To p)) -> BSM m Bool)
       f' _ (That _) = pure False
-      f' p a@(This o') = {- traceShow ('1', a) $ -} do
+      f' p (This o') = {- traceShow ('1', o') $ -} do
         setProperty p n o'
         pure False
-      f' _ a@(These o' n') = {- traceShow ('2', a) $ -} do
+      f' _ (These o' n') = {- traceShow ('2', o',n') $ -} do
         redirectVarS o' n'
         pure True
 

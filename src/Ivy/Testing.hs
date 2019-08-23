@@ -39,4 +39,4 @@ instance (MonadProperty e p m)
          => MonadProperty e p (PropertyT m) where
 
   propertyOf :: p -> Var m (From p) -> PropertyT m (Var m (To p))
-  propertyOf a t = lift $ propertyOf @e a t
+  propertyOf a t = lift $ propertyOf @e @p a t
