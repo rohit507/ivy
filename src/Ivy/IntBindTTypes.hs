@@ -175,7 +175,7 @@ instance (Typeable t) => At (TermMap t) where
       fsetter mts (TermMap x)
         = TermMap $ case TM.lookup (typeRep @(Term t)) x of
             Just mt ->
-              TM.update (typeRep @(Term t)) (Just . HM.update (const mts) tid) x
+              TM.insert (typeRep @(Term t)) (HM.alter (const mts) tid mt) x
             Nothing ->
               TM.insert (typeRep @(Term t)) (HM.alter (const mts) tid mempty) x
 

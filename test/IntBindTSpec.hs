@@ -87,6 +87,20 @@ prt_bind gen = do
 hprop_bind :: H.Property
 hprop_bind = mkProp $ prt_bind intGen
 
+prt_rebind :: forall a e m. (MonadBind e m (ConstF a), EqIsh a, Show a)
+           => Gen a -> PropertyT m ()
+prt_rebind gen = do
+  a <- ConstF <$> forAll gen
+  b <- ConstF <$> forAll gen
+  v <- newVar a
+  lookupVar v >>= (=== Just a)
+  v' <- bindVar v b
+  lookupVar v  >>= (=== Just b)
+  lookupVar v' >>= (=== Just b)
+
+hprop_rebind :: H.Property
+hprop_rebind = mkProp $ prt_rebind intGen
+
 prt_redirect :: forall a e m. (MonadIO m, MonadBind e m (ConstF a), EqIsh a, Show a)
   => Gen a -> PropertyT m ()
 prt_redirect gen = do

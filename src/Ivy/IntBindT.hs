@@ -105,7 +105,7 @@ freeVarS = do
   pure nv
 
 lookupVarS :: forall m t. (BSMTC m t) => TermID t -> BSM m (Maybe (t (TermID t)))
-lookupVarS t = getTermState t >>= \case
+lookupVarS t = getRepresentative t >>= getTermState >>= \case
   Forwarded _ -> panic "Unreachable: getRepresentative always returns bound term."
   Bound bs  -> traverse freshenTerm (bs ^. termValue)
 
@@ -113,7 +113,7 @@ bindVarS :: forall m t. (BSMTC m t) => TermID t -> t (TermID t) -> BSM m (TermID
 bindVarS v t = do
   mot <- lookupVarS v
   nt  <- freshenTerm t
-  whenJust mot $ \ ot -> trace "D" $ do
+  whenJust mot $ \ ot -> do
     let otd = foldMap (HS.singleton . toExID) ot
         ntd = foldMap (HS.singleton . toExID) nt
         tv = toExID v
@@ -129,6 +129,7 @@ bindVarS v t = do
     $ pushUpdates (toExID v)
   getRepresentative v
 
+-- | TODO :: Fix this, It's not doing sensible things
 redirectVarS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m (TermID t)
 redirectVarS old new = do
   o' <- getRepresentative old
@@ -140,7 +141,7 @@ redirectVarS old new = do
     getDependencies @m to' >>= traverse_ (manageDependencies to' tn')
     getDependents   @m tn' >>= traverse_ (manageDependents   to' tn')
     to' `dependsOn` tn'
-    lookupVarS o' >>= setTermValue n'
+    -- lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
     dirty  <- (||) <$> redirectRelations @e o' n' <*> redirectRules o' n'
     when dirty $ pushUpdates tn'
