@@ -31,12 +31,13 @@ import Ivy.Testing ()
 newtype ConstF a f where
   ConstF :: a -> ConstF a f
 
+
 class EqIsh a where
   eqIsh :: a -> a -> Bool
   default eqIsh :: (Eq a) => a -> a -> Bool
   eqIsh = (==)
 
-deriving instance (Show a) => Show (ConstF a f)
+deriving stock instance (Show a) => Show (ConstF a f)
 deriving instance Functor (ConstF a)
 deriving instance Foldable (ConstF a)
 deriving instance Traversable (ConstF a)
@@ -157,7 +158,6 @@ prt_property gen = do
 hprop_property :: H.Property
 hprop_property = mkProp $ prt_property intGen
 
-
 prt_propertyRedirect :: forall a e m. (MonadProperty e (Prop (ConstF a)) m
                                      , MonadBind e m (ConstF a)
                                      , EqIsh a
@@ -194,30 +194,38 @@ prt_singleRule :: forall a e m. ( MonadProperty e (Prop (ConstF a)) m
                                , Show a
                                , Num a)
              => Gen a -> PropertyT m ()
--- prt_singleRule gen = undefined
 prt_singleRule gen = do
   a <- ConstF <$> forAll gen
+  annotateShow a
   b <- ConstF <$> forAll gen
+  annotateShow b
   va <- newVar a
+  annotateShow va
   vp <- Prop @(ConstF a) `propertyOf` va
-  lift . addRule $ ((lookupVar va >>= \case
-      Nothing -> skip
+  annotateShow vp
+  annotateShow =<< lookupVar va
+  annotateShow =<< lookupVar vp
+  lift . addRule $ lookupVar va >>= \case
+      Nothing -> panic "va should already be assigned"
       Just n -> do
         vp <- Prop @(ConstF a) `propertyOf` va
-        bindVar vp (n + 1)
-        skip) :: Rule m ())
+        _ <- bindVar vp (n + 1)
+        skip
+  annotateShow =<< lookupVar va
+  annotateShow =<< lookupVar vp
   lookupVar va >>= (=== Just a)
   lookupVar vp >>= (=== Just (a + 1))
-  bindVar va b
+  vc <- bindVar va b
+  annotateShow vc
+  annotateShow vp
+  annotateShow =<< lookupVar va
+  annotateShow =<< lookupVar vp
   lookupVar va >>= (=== Just b)
   lookupVar vp >>= (=== Just (b + 1))
+  skip
 
 hprop_singleRule :: H.Property
 hprop_singleRule = mkProp $ prt_singleRule @Int @Text @(BindM Text) intGen
-
-
-
-
 
 -- rules
 -- default rules?

@@ -330,9 +330,7 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => SomeVar -> SomeVar -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
 
-instance (forall i. BSEMTC e m i => MonadBind e m i
-         , BSEMC e m
-         ) => MonadRule e (IntBindT m) where
+instance (BSEMC e m) => MonadRule e (IntBindT m) where
 
   type Rule (IntBindT m) = RuleT (IntBindT m)
 
@@ -795,7 +793,7 @@ triggerRule rid = lookupRule rid >>= \case
   Nothing -> panic "unreachable"
   Just rs -> do
     results <- uncurry runRule rs
-    traverse_ (uncurry insertRule) results
+    traverse_ (triggerRule <=< uncurry insertRule) results
 
 -- | adds a term to the watchlist and the history
 addToWatched :: forall m t. (BSMTC m t) => TermID t -> RTIB m ()
