@@ -55,6 +55,7 @@ import Data.HashSet (HashSet)
 --   another.
 class ( Typeable t
       , Traversable t
+      , JoinSemiLattice1 e t
       , Eq1 t
       , Monad m
       , Show (Var m t)
@@ -116,7 +117,10 @@ class (Monad m, MonadBind e m (From p), MonadBind e m (To p), Property p) => Mon
 class MonadProperties e m where
 
   getPropertyPairs :: forall a t. (MonadBind e m t)
-      => (forall proxy p. (From p ~ t, MonadUnify e m (To p), MonadProperty e p m, Property p)
+      => (forall proxy p. (From p ~ t
+                         , MonadAssume e m (To p)
+                         , MonadProperty e p m
+                         , Property p)
                       => proxy p -> These (Var m (To p)) (Var m (To p)) -> m a)
       -> (a -> a -> m a)
       -> a
@@ -152,15 +156,13 @@ class (MonadBind e m t) => MonadAssume e m t where
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
-class ( forall t. (MonadBind     e m t) => MonadBind e (Rule m) t
-      --, forall t. (MonadUnify    e m t) => MonadUnify e (Rule m) t
-      , forall t. (MonadAssume   e m t) => MonadAssume e (Rule m) t
+class ( forall g. (MonadBind     e m g) => MonadBind e (Rule m) g
+      , forall k. (MonadAssume   e m k) => MonadAssume e (Rule m) k
       , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
       , MonadError e m
-      , MonadError e (Rule m)
-      , MonadRule e m
-      , Var m ~ Var (Rule m)
+      , MonadRule e (Rule m)
       , Rule (Rule m) ~ (Rule m)
+      , Var m ~ Var (Rule m)
       ) => MonadRule e m | m -> e where
 
   type Rule m :: Type -> Type
@@ -172,8 +174,6 @@ class ( forall t. (MonadBind     e m t) => MonadBind e (Rule m) t
   default addRule :: (Rule m ~ m) => Rule m () -> m ()
   addRule = id
 
-
-
 data BinOpContext a b c e m t = BinOpContext
   { check :: c -> These (Var m t) (Var m t) -> m (Maybe a)
   , update :: c -> These (Var m t) (Var m t) -> m c
@@ -183,15 +183,14 @@ data BinOpContext a b c e m t = BinOpContext
   , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
   }
 
-type MonadUnify e m t
-  = ( MonadRule e m
-    , MonadBind e m t
-    , MonadAssume e m t
-    , MonadProperties e m
-    , JoinSemiLattice1 e t
-    , Newtype (Var m t) Int
-    , Var m ~ Var (Rule m)
-    )
+-- type MonadUnify e m t
+--   = ( MonadRule e m
+--     , MonadBind e m t
+--     , MonadAssume e m t
+--     , MonadProperties e m
+--     , Newtype (Var m t) Int
+--     , Var m ~ Var (Rule m)
+--     )
 
 recBinOpF :: forall a b c e m t. (MonadBind e m t, JoinSemiLattice1 e t)
          => BinOpContext a b c e m t
@@ -256,7 +255,10 @@ instance Eq (TVar m) where
 
 -- | Returns nothing if the terms aren't equal, otherwise it returns a list
 --   of terms that should be unified to unify the input terms.
-equals :: forall e m t. (MonadUnify e m t, JoinSemiLattice1 e t)
+equals :: forall e m t. (MonadAssume e m t
+                       , MonadProperties e m
+                       , JoinSemiLattice1 e t
+                       )
    => Var m t -> Var m t -> m Bool
 equals a b = recBinOp context () (These a b)
 
@@ -288,13 +290,15 @@ equals a b = recBinOp context () (These a b)
 
     helper a b = getPropertyPairs @e getEq (\ a b -> pure $ a && b) True a b
       where
-        getEq :: forall p t'. (MonadUnify e m t')
-                 => p -> These (Var m t') (Var m t') -> m Bool
+        getEq :: forall p proxy. (From p ~ t, MonadAssume e m (To p))
+                 => proxy p -> These (Var m (To p)) (Var m (To p)) -> m Bool
         getEq _ (These a b) = equals a b
         getEq _ _ = pure True
 
 -- | unifies two terms as needed
-unify :: forall e m t. (MonadUnify e m t)
+unify :: forall e m t. ( MonadAssume e m t
+                      , MonadProperties e m
+                      )
    => Var m t -> Var m t -> m (Var m t)
 unify a b = recBinOp context () (These a b)
 
@@ -329,7 +333,10 @@ unify a b = recBinOp context () (These a b)
     unifyProps :: Var m t -> Var m t -> m ()
     unifyProps a b = getPropertyPairs unifyProp (\ a b -> pure $ a <> b) mempty a b
       where
-        unifyProp :: forall p proxy. (From p ~ t, MonadUnify e m (To p), MonadProperty e p m, Property p)
+        unifyProp :: forall p proxy. (From p ~ t
+                                    , MonadAssume e m (To p)
+                                    , MonadProperty e p m
+                                    , Property p)
                  => proxy p -> These (Var m (To p)) (Var m (To p)) -> m ()
         unifyProp _ (These a' b') = unify @e @m @(To p) a' b' *> skip
         unifyProp _ (This a') = (unify a' =<< ((rep :: p) `propertyOf` b)) *> skip
@@ -340,8 +347,12 @@ unify a b = recBinOp context () (These a b)
 --   FIXME :: This has a subtle error because we don't actually keep a visible
 --           mapping from subsumed to subsumer. It'll end up duplicating terms
 --           from the subsumer if they're referenced multiple times.
-subsume :: forall e m t. (MonadUnify e m t, MonadUnify e (Rule m) t)
-        => Var m t -> Var m t -> m (Var m t)
+subsume :: forall e m t. ( MonadAssume e m t
+                        , MonadAssume e (Rule m) t
+                        , MonadRule e m
+                        , MonadProperties e m
+                        , MonadProperties e (Rule m)
+                        ) => Var m t -> Var m t -> m (Var m t)
 subsume a b = (addRule $ performSubsume a b *> skip) *> pure b
 
   where

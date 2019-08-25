@@ -46,10 +46,15 @@ type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e)
 type BSMC m = (Monad m, Typeable m)
+
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
+
 type BSMTC m t = (BSMC m, BSTC t, Newtype (Var (IntBindT m) t) Int)
+
 type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
+
 type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
+
 type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
 
 
@@ -240,7 +245,7 @@ data BoundState t = BoundState
 data RuleState where
   Merged :: RuleID -> RuleState
   Waiting :: (Typeable m)
-    => TypeRep m -> RuleMeta -> Rule m () -> RuleState
+    => TypeRep m -> RuleMeta m -> Rule m () -> RuleState
 
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
@@ -261,16 +266,41 @@ data RuleHistory = RuleHistory
   , _nextStep :: [ExID] }
   deriving (Eq, Ord)
 
-data RuleMeta = RuleMeta
-                { _history    :: RuleHistory
+data RuleVar (m :: Type -> Type) where
+  RuleVar :: (Ord (Var m t), Typeable t, Hashable (Var m t))
+    => TypeRep t -> Var m t -> RuleVar m
+
+instance Eq (RuleVar m) where
+  (RuleVar t v) == (RuleVar t' v')
+    = case eqTypeRep t t' of
+       Nothing -> False
+       Just HRefl -> v == v'
+
+instance Ord (RuleVar m) where
+  compare (RuleVar t v) (RuleVar t' v')
+    = case compare (someTypeRep t) (someTypeRep t') of
+       EQ -> case eqTypeRep t t' of
+               Just HRefl -> compare v v'
+               Nothing -> panic "unreachable"
+       a -> a
+
+instance Hashable (RuleVar m) where
+  hashWithSalt s (RuleVar _ v) = hashWithSalt (s + 1) v
+
+type RuleVarIB m = RuleVar (IntBindT m)
+
+data RuleMeta m = RuleMeta
+  { _history    :: RuleHistory
   , _watched    :: HashSet ExID
-  , _assumptions :: Assertions UnivID
+  , _assumptions :: Assertions (RuleVar m)
   }
 
-newRuleMeta :: RuleID -> RuleMeta
+type RuleMetaIB m = RuleMeta (IntBindT m)
+
+newRuleMeta :: RuleID -> RuleMeta m
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
-type RT = StateT RuleMeta
+type RT m = StateT (RuleMeta m) m
 type RTIB m = RT (IntBindT m)
 type RuleIB m = Rule (IntBindT m)
 

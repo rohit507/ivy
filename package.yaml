@@ -108,6 +108,8 @@ default-extensions:
   ViewPatterns
 
 ghc-options:
+  - -fprof-auto
+  # - -ddump-tc-trace
   - -Wall
   - -Wcompat
   - -Wincomplete-record-updates
@@ -129,6 +131,6 @@ ghc-options:
   # - -fprint-potential-instances
   # - -ddump-cs-trace
   # - -ddump-splices
-  # - -ddump-to-file
+  - -ddump-to-file
   - -fprint-typechecker-elaboration
   #- -prof

@@ -71,29 +71,29 @@ instance MonadTransControl IntBindT where
 
 type VarIB m = VarID (IntBindT m)
 
-instance (BSEMTC e m t)
-         => MonadBind e (IntBindT m) t where
+instance (BSEMTC e m r)
+         => MonadBind e (IntBindT m) r where
 
   type Var (IntBindT m) = VarID (IntBindT m)
 
-  freeVar :: IntBindT m (VarIB m t)
-  freeVar = IntBindT $ force @(VarIB m t) <$> (freeVarS @m @t)
+  freeVar :: IntBindT m (VarIB m r)
+  freeVar = IntBindT $ force @(VarIB m r) <$> (freeVarS @m @r)
 
-  lookupVar :: VarIB m t -> IntBindT m (Maybe (t (VarIB m t)))
+  lookupVar :: VarIB m r -> IntBindT m (Maybe (r (VarIB m r)))
   lookupVar
     = IntBindT
-    . map (map . map $ force @(VarIB m t))
-    . lookupVarS @m @t
-    . force @(TermID t)
+    . map (map . map $ force @(VarIB m r))
+    . lookupVarS @m @r
+    . force @(TermID r)
 
-  bindVar :: VarIB m t -> t (VarIB m t) -> IntBindT m (VarIB m t)
+  bindVar :: VarIB m r -> r (VarIB m r) -> IntBindT m (VarIB m r)
   bindVar v t = IntBindT $ force <$> (bindVarS (force v) $ map force t)
 
-  redirectVar :: VarIB m t -> VarIB m t -> IntBindT m (VarIB m t)
-  redirectVar a b = IntBindT $ force <$> redirectVarS @e @m @t (force a) (force b)
+  redirectVar :: VarIB m r -> VarIB m r -> IntBindT m (VarIB m r)
+  redirectVar a b = IntBindT $ force <$> redirectVarS @e @m @r (force a) (force b)
 
-  freshenVar :: VarIB m t -> IntBindT m (VarIB m t)
-  freshenVar a = IntBindT $ force <$> getRepresentative (force @(TermID t) a)
+  freshenVar :: VarIB m r -> IntBindT m (VarIB m r)
+  freshenVar a = IntBindT $ force <$> getRepresentative (force @(TermID r) a)
 
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
@@ -175,13 +175,13 @@ propertyOfS _ v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep
     pure r
   Just r -> pure r
 
-instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties e (IntBindT m) where
+instance (BSEMC e m) => MonadProperties e (IntBindT m) where
 
 
   getPropertyPairs :: forall a t. (MonadBind e (IntBindT m) t)
-      => (forall p proxy. (From p ~ t
-                    , MonadUnify e (IntBindT m) (To p)
-                    , MonadProperty e p (IntBindT m), Property p)
+      => (forall p proxy. ( From p ~ t
+                         , MonadAssume e (IntBindT m) (To p)
+                         , MonadProperty e p (IntBindT m), Property p)
                       => proxy p -> These (VarIB m (To p)) (VarIB m (To p)) -> IntBindT m a)
       -> (a -> a -> IntBindT m a)
       -> a
@@ -200,7 +200,7 @@ instance (forall t. (BSETC e t) => (BSEMTC e m t), BSEMC e m) => MonadProperties
       mappendM' a b = getIntBindT $ mappendM a b
 
 
-getPropertyPairsS :: forall a e m t. (BSEMTC e m t)
+getPropertyPairsS :: forall a e m t. (BSEMC e m, BSTC t)
     => (forall p proxy. (From p ~ t, Property p, BSEMTC e m (To p))
                     => proxy p -> These (TermID (To p)) (TermID (To p)) ->BSM m a)
     -> (a -> a -> BSM m a)
@@ -316,9 +316,9 @@ assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
 assumeSubsumedS :: forall a m t. (BSMTC m t) => UnivID -> UnivID -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
 
-instance ( forall t. (MonadBind e (IntBindT m) t) => BSEMTC e m t
-         , BSEMC e m)
-  => MonadRule e (IntBindT m) where
+instance (forall i. BSEMTC e m i => MonadBind e m i
+         , BSEMC e m
+         ) => MonadRule e (IntBindT m) where
 
   type Rule (IntBindT m) = RuleT (IntBindT m)
 
@@ -381,12 +381,15 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   freshenVar = lift . freshenVar
 
-instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e m t) => MonadAssume e (RuleT m) t where
+instance ( MonadRule e m
+         , Rule m ~ RuleT m
+         , MonadAssume e m t
+         ) => MonadAssume e (RuleT m) t where
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeEqual a b m = RLift $ do
     old <- use @RuleMeta assumptions
-    assumptions %= addEqAssertion (force a) (force b)
+    assumptions %= addEqAssertion a b
     rtDrop $ do
      a <- m
      rtLift $ assumptions .= old
@@ -395,7 +398,7 @@ instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeUnified a b m = RLift $ do
     old <- use @RuleMeta assumptions
-    assumptions %= addUniAssertion (force a) (force b)
+    assumptions %= addUniAssertion a b
     rtDrop $ do
      a <- m
      rtLift $ assumptions .= old
@@ -404,7 +407,7 @@ instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeSubsumed a b m = RLift $ do
     old <- use @RuleMeta assumptions
-    assumptions %= addSubAssertion (force a) (force b)
+    assumptions %= addSubAssertion a b
     rtDrop $ do
      a <- m
      rtLift $ assumptions .= old
@@ -440,7 +443,7 @@ instance (MonadRule e m, Rule m ~ RuleT m, Newtype (Var m t) Int,  MonadAssume e
   -- | It is unclear is this is
   isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
   isAssumedSubsumed a b = RLift $ do
-    assumed :: Assertions Int <- use assumptions
+    assumed :: Assertions (RuleVarIB m) <- use assumptions
     pure . pure $ do
       let a' = getRep (force a) assumed
           b' = getRep (force b) assumed
@@ -466,7 +469,10 @@ instance (MonadProperties e m
          ) => MonadProperties e (RuleT m) where
 
   getPropertyPairs :: forall a t. (MonadBind e (RuleT m) t)
-      => (forall p proxy. (From p ~ t, MonadUnify e (RuleT m) (To p), MonadProperty e p (RuleT m), Property p)
+      => (forall p proxy. (From p ~ t
+                         , MonadAssume e (RuleT m) (To p)
+                         , MonadProperty e p (RuleT m)
+                         , Property p)
                       => proxy p -> These (Var m (To p)) (Var m (To p)) -> RuleT m a)
       -> (a -> a -> RuleT m a)
       -> a
@@ -481,7 +487,7 @@ instance (MonadProperties e m
 instance (Monad m) => MonadFail (RuleT m) where
   fail _ = RLift $ pure []
 
-instance (MonadError e m, MonadRule e m) => MonadRule e (RuleT m) where
+instance (MonadRule e m) => MonadRule e (RuleT m) where
   type Rule (RuleT m) = RuleT m
   addRule = id
 
@@ -684,13 +690,13 @@ getPropMap t = do
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule.
 runRule :: forall m. (BSMC m)
-  => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
+  => RuleMetaIB m -> RuleIB m () -> BSM m [(RuleMetaIB m, RuleIB m ())]
 runRule rm rule = do
   (rs, ns) <- getIntBindT $  runStateT (evalRule rule) rm
   pure $ map (\ a -> (ns,a)) rs
 
 -- | History aware lookup of rules.
-insertRule :: forall m. (BSMC m) => RuleMeta -> RuleIB m () -> BSM m RuleID
+insertRule :: forall m. (BSMC m) => RuleMetaIB m -> RuleIB m () -> BSM m RuleID
 insertRule rm@(RuleMeta hist watch _) rule = do
   lookupRuleHistory hist >>= \case
     Just rid -> pure rid
@@ -724,7 +730,7 @@ getRepExID :: forall m. (BSMC m) => ExID -> BSM m ExID
 getRepExID (RID r) = RID <$> getRuleRep r
 getRepExID (TID tt t) = TID tt <$> getRepresentative t
 
-lookupRule :: forall m. (BSMC m) => RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
+lookupRule :: forall m. (BSMC m) => RuleID -> BSM m (Maybe (RuleMetaIB m, RuleIB m ()))
 lookupRule r = do
   r' <- getRuleRep r
   use (rules . at r') >>= \case

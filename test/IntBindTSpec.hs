@@ -40,7 +40,7 @@ deriving instance (Show a) => Show (ConstF a f)
 deriving instance Functor (ConstF a)
 deriving instance Foldable (ConstF a)
 deriving instance Traversable (ConstF a)
-deriving instance Num a => Num (ConstF a f)
+deriving newtype instance Num a => Num (ConstF a f)
 
 instance EqIsh Int
 
@@ -186,13 +186,15 @@ hprop_propertyRedirect :: H.Property
 hprop_propertyRedirect = mkProp $ prt_propertyRedirect intGen
 
 prt_singleRule :: forall a e m. ( MonadProperty e (Prop (ConstF a)) m
-                               , MonadBind e m (ConstF a)
+                               , MonadProperty e (Prop (ConstF a)) (Rule m)
                                , EqualityErr e a
                                , MonadRule e m
+                               , MonadRule e (Rule m)
                                , EqIsh a
                                , Show a
                                , Num a)
              => Gen a -> PropertyT m ()
+-- prt_singleRule gen = undefined
 prt_singleRule gen = do
   a <- ConstF <$> forAll gen
   b <- ConstF <$> forAll gen
@@ -214,14 +216,6 @@ hprop_singleRule :: H.Property
 hprop_singleRule = mkProp $ prt_singleRule @Int @Text @(BindM Text) intGen
 
 
-
-class Foo a where
-  t :: a -> a
-
-class (forall g. Foo g => Foo (m g)) => Bar m
-
-test :: (Foo a, Bar m) => m a -> m a
-test = t
 
 
 
