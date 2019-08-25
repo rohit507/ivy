@@ -481,7 +481,7 @@ instance (MonadProperties e m
 instance (Monad m) => MonadFail (RuleT m) where
   fail _ = RLift $ pure []
 
-instance (MonadError e m) => MonadRule e (RuleT m) where
+instance (MonadError e m, MonadRule e m) => MonadRule e (RuleT m) where
   type Rule (RuleT m) = RuleT m
   addRule = id
 

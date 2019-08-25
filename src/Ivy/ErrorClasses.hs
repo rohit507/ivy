@@ -18,16 +18,16 @@ module Ivy.ErrorClasses where
 import Intro hiding (Item)
 -- import Ivy.Prelude
 
-class EqualityErr a e where
+class EqualityErr e a where
   valuesNotEqual :: a -> a -> e
 
-throwValuesNotEqual :: (EqualityErr a e, MonadError e m) => a -> a -> m b
+throwValuesNotEqual :: (EqualityErr e a, MonadError e m) => a -> a -> m b
 throwValuesNotEqual a b = throwError $ valuesNotEqual a b
 
-instance (Show a) => EqualityErr a Text where
+instance (Show a) => EqualityErr Text a where
   valuesNotEqual :: a -> a -> Text
   valuesNotEqual a b = "Values `" <> show a <> "`, `" <> show b <> "` are not equal."
 
-instance (Show a) => EqualityErr a Void where
+instance (Show a) => EqualityErr Void a where
   valuesNotEqual :: a -> a -> Void
   valuesNotEqual a b = panic $ valuesNotEqual a b

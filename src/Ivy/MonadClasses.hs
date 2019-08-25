@@ -152,12 +152,13 @@ class (MonadBind e m t) => MonadAssume e m t where
 
 -- | Rules allow for the enforcement of relationships between terms as an
 --   operation is performed.
-class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
-      , forall t. (MonadUnify e m t) => MonadUnify e (Rule m) t
-      , forall t. (MonadAssume e m t) => MonadAssume e (Rule m) t
+class ( forall t. (MonadBind     e m t) => MonadBind e (Rule m) t
+      --, forall t. (MonadUnify    e m t) => MonadUnify e (Rule m) t
+      , forall t. (MonadAssume   e m t) => MonadAssume e (Rule m) t
       , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
       , MonadError e m
       , MonadError e (Rule m)
+      , MonadRule e m
       , Var m ~ Var (Rule m)
       , Rule (Rule m) ~ (Rule m)
       ) => MonadRule e m | m -> e where
@@ -170,6 +171,7 @@ class ( forall t. (MonadBind e m t) => MonadBind e (Rule m) t
   addRule :: Rule m () -> m ()
   default addRule :: (Rule m ~ m) => Rule m () -> m ()
   addRule = id
+
 
 
 data BinOpContext a b c e m t = BinOpContext

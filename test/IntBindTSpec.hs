@@ -28,7 +28,7 @@ import Ivy.IntBindT
 import Ivy.ErrorClasses
 import Ivy.Testing ()
 
-data ConstF a f where
+newtype ConstF a f where
   ConstF :: a -> ConstF a f
 
 class EqIsh a where
@@ -40,6 +40,7 @@ deriving instance (Show a) => Show (ConstF a f)
 deriving instance Functor (ConstF a)
 deriving instance Foldable (ConstF a)
 deriving instance Traversable (ConstF a)
+deriving instance Num a => Num (ConstF a f)
 
 instance EqIsh Int
 
@@ -49,7 +50,7 @@ instance (EqIsh a) => Eq (ConstF a f) where
 instance (EqIsh a) => Eq1 (ConstF a) where
   liftEq _ (ConstF a) (ConstF b) = eqIsh a b
 
-instance (EqIsh a, EqualityErr a e) => JoinSemiLattice1 e (ConstF a) where
+instance (EqIsh a, EqualityErr e a) => JoinSemiLattice1 e (ConstF a) where
   liftLatJoin (ConstF a) (ConstF b)
     | eqIsh a b = Right $ ConstF a
     | otherwise = Left $ valuesNotEqual a b
@@ -183,6 +184,46 @@ prt_propertyRedirect gen = do
 
 hprop_propertyRedirect :: H.Property
 hprop_propertyRedirect = mkProp $ prt_propertyRedirect intGen
+
+prt_singleRule :: forall a e m. ( MonadProperty e (Prop (ConstF a)) m
+                               , MonadBind e m (ConstF a)
+                               , EqualityErr e a
+                               , MonadRule e m
+                               , EqIsh a
+                               , Show a
+                               , Num a)
+             => Gen a -> PropertyT m ()
+prt_singleRule gen = do
+  a <- ConstF <$> forAll gen
+  b <- ConstF <$> forAll gen
+  va <- newVar a
+  vp <- Prop @(ConstF a) `propertyOf` va
+  lift . addRule $ ((lookupVar va >>= \case
+      Nothing -> skip
+      Just n -> do
+        vp <- Prop @(ConstF a) `propertyOf` va
+        bindVar vp (n + 1)
+        skip) :: Rule m ())
+  lookupVar va >>= (=== Just a)
+  lookupVar vp >>= (=== Just (a + 1))
+  bindVar va b
+  lookupVar va >>= (=== Just b)
+  lookupVar vp >>= (=== Just (b + 1))
+
+hprop_singleRule :: H.Property
+hprop_singleRule = mkProp $ prt_singleRule @Int @Text @(BindM Text) intGen
+
+
+
+class Foo a where
+  t :: a -> a
+
+class (forall g. Foo g => Foo (m g)) => Bar m
+
+test :: (Foo a, Bar m) => m a -> m a
+test = t
+
+
 
 -- rules
 -- default rules?

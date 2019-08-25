@@ -40,3 +40,22 @@ instance (MonadProperty e p m)
 
   propertyOf :: p -> Var m (From p) -> PropertyT m (Var m (To p))
   propertyOf a t = lift $ propertyOf @e @p a t
+
+
+-- class ( , MonadError e m
+--       , MonadError e (Rule m)
+--       , MonadRule e m
+--       , Var m ~ Var (Rule m)
+--       , Rule (Rule m) ~ (Rule m)
+--       ) => MonadRule e m | m -> e where
+
+--   type Rule m :: Type -> Type
+
+--   -- | Default implementation exists for r ~ m, where addRule is just identity.
+--   --   since any recursively defined rules should just become a single
+--   --   larger rule.
+--   addRule :: Rule m () -> m ()
+--   default addRule :: (Rule m ~ m) => Rule m () -> m ()
+--   addRule = id
+
+--   addGeneralRule :: (MonadBind e m t) => (t (Var m t) -> Rule m ()) -> m ()
