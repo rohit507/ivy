@@ -136,7 +136,7 @@ instance (BSTC t) => ToExID (TermID t) where
 data Context = Context
   { _config  :: Config
   -- | Things we assume are true
-  , _assumptions :: Assertions UnivID
+  , _assumptions :: Assertions SomeVar
   }
 
 data Config = Config
@@ -208,7 +208,7 @@ data BindingState = BindingState
   , _dependencies  :: AdjacencyMap ExID
   , _ruleHistories :: HashMap RuleID RuleHistories
   , _defaultRules  :: RuleMap
-  , _assertions    :: Assertions UnivID
+  , _assertions    :: Assertions SomeVar
   }
 
 initialBindingState :: Supply -> BindingState
@@ -245,7 +245,7 @@ data BoundState t = BoundState
 data RuleState where
   Merged :: RuleID -> RuleState
   Waiting :: (Typeable m)
-    => TypeRep m -> RuleMeta m -> Rule m () -> RuleState
+    => TypeRep m -> RuleMeta -> Rule m () -> RuleState
 
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
@@ -266,41 +266,54 @@ data RuleHistory = RuleHistory
   , _nextStep :: [ExID] }
   deriving (Eq, Ord)
 
-data RuleVar (m :: Type -> Type) where
-  RuleVar :: (Ord (Var m t), Typeable t, Hashable (Var m t))
-    => TypeRep t -> Var m t -> RuleVar m
+type SomeVarC m t =  (Ord (Var m t), Typeable m, Typeable t, Hashable (Var m t))
 
-instance Eq (RuleVar m) where
-  (RuleVar t v) == (RuleVar t' v')
-    = case eqTypeRep t t' of
-       Nothing -> False
-       Just HRefl -> v == v'
+data SomeVar where
+  SomeVar :: SomeVarC m t
+    => TypeRep m -> TypeRep t -> Var m t -> SomeVar
 
-instance Ord (RuleVar m) where
-  compare (RuleVar t v) (RuleVar t' v')
-    = case compare (someTypeRep t) (someTypeRep t') of
-       EQ -> case eqTypeRep t t' of
-               Just HRefl -> compare v v'
-               Nothing -> panic "unreachable"
+instance Eq SomeVar where
+  (SomeVar m t v) == (SomeVar m' t' v')
+    = fromMaybe False $ do
+       HRefl <- eqTypeRep m m'
+       HRefl <- eqTypeRep t t'
+       pure $ v == v'
+
+
+instance Ord SomeVar where
+  compare (SomeVar m t v) (SomeVar m' t' v')
+    = case compare (someTypeRep m) (someTypeRep m') of
+       EQ -> case compare (someTypeRep t) (someTypeRep t') of
+         EQ -> fromMaybe (panic "unreachable") $ do
+           HRefl <- eqTypeRep m m'
+           HRefl <- eqTypeRep t t'
+           pure $ compare v v'
+         a -> a
        a -> a
 
-instance Hashable (RuleVar m) where
-  hashWithSalt s (RuleVar _ v) = hashWithSalt (s + 1) v
+instance Hashable SomeVar where
+  hashWithSalt s (SomeVar _ _ v) = hashWithSalt (s + 1) v
 
-type RuleVarIB m = RuleVar (IntBindT m)
-
-data RuleMeta m = RuleMeta
+data RuleMeta = RuleMeta
   { _history    :: RuleHistory
   , _watched    :: HashSet ExID
-  , _assumptions :: Assertions (RuleVar m)
+  , _assumptions :: Assertions SomeVar
   }
 
-type RuleMetaIB m = RuleMeta (IntBindT m)
+fromSomeVar :: forall m t. (Typeable m, Typeable t) => SomeVar -> Maybe (Var m t)
+fromSomeVar (SomeVar tm tt v) = do
+  HRefl <- eqTypeRep tm (typeRep @m)
+  HRefl <- eqTypeRep tt (typeRep @t)
+  pure v
 
-newRuleMeta :: RuleID -> RuleMeta m
+toSomeVar :: forall m t. (SomeVarC m t) => Var m t -> SomeVar
+toSomeVar v = SomeVar (typeRep @m) (typeRep @t) v
+
+
+newRuleMeta :: RuleID -> RuleMeta
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
-type RT m = StateT (RuleMeta m) m
+type RT = StateT RuleMeta
 type RTIB m = RT (IntBindT m)
 type RuleIB m = Rule (IntBindT m)
 
