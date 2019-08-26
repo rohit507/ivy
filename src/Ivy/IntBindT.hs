@@ -98,6 +98,7 @@ instance (BSEMTC e m r)
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
   nv :: TermID t <- newIdent
+  traceShowM ('f', nv)
   setTermState nv freeTermState
   addTermToDeps nv
   addTermToIdents nv
@@ -113,21 +114,36 @@ bindVarS :: forall m t. (BSMTC m t) => TermID t -> t (TermID t) -> BSM m (TermID
 bindVarS v t = do
   mot <- lookupVarS v
   nt  <- freshenTerm t
-  whenJust mot $ \ ot -> do
+  traceShowM =<< (('b','p',v,) <$> use ruleHistories)
+  -- traceShowM =<< (('b','d',) <$> use dependencies)
+  depChange <- map (fromMaybe False) . whenJust mot $ \ ot -> do
     let otd = foldMap (HS.singleton . toExID) ot
         ntd = foldMap (HS.singleton . toExID) nt
         tv = toExID v
         lostDeps = HS.difference otd ntd
         newDeps  = HS.difference ntd otd
+    -- traceShowM =<< (('b','a',) <$> use ruleHistories)
     unless (HS.null lostDeps) $
       traverse_ (tv `doesNotDependOn`) $ HS.toList lostDeps
+    -- traceShowM =<< (('b','b',) <$> use ruleHistories)
     unless (HS.null newDeps) $
       traverse_ (tv `dependsOn`) $ HS.toList newDeps
-  setTermValue v $ Just nt
+    -- traceShowM =<< (('b','c',) <$> use ruleHistories)
+    pure $ HS.null lostDeps || HS.null newDeps
+  -- traceShowM =<< (('b','d',) <$> use ruleHistories)
+  v' <- getRepresentative v
+  setTermValue v' $ Just nt
+  -- traceShowM =<< (('b','e',) <$> use ruleHistories)
   -- When the term has changed in some salient way we need to push updates.
-  when (fromMaybe True $ (liftEq (==)) <$> (Just nt) <*> mot)
-    $ pushUpdates (toExID v)
-  getRepresentative v
+  let dirty = depChange ||
+                (not . fromMaybe False $ (liftEq (==)) <$> (Just nt) <*> mot)
+  when (traceShowId dirty) $ do
+    traceShowM =<< (('b','1',) <$> use ruleHistories)
+    -- traceShowM =<< (('b','d',) <$> use dependencies)
+    pushUpdates . toExID =<< getRepresentative v'
+    traceShowM =<< (('b','2',) <$> use ruleHistories)
+    -- traceShowM =<< (('b','d',) <$> use dependencies)
+  getRepresentative v'
 
 -- | TODO :: Fix this, It's not doing sensible things
 redirectVarS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m (TermID t)
@@ -172,6 +188,7 @@ propertyOfS _ v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep
   Nothing -> do
     r :: TermID (To p) <- freeVarS
     setProperty @e (typeRep @p) v r
+    traceShowM ('p',r)
     pure r
   Just r -> pure r
 
@@ -339,7 +356,10 @@ instance (BSEMC e m) => MonadRule e (IntBindT m) where
 addRuleS :: (BSMC m) => RuleIB m () -> BSM m ()
 addRuleS r = do
   rid :: RuleID <- newIdent
+  traceShowM =<< (('a','1',rid,) <$> use ruleHistories)
   insertRule (newRuleMeta rid) r >>= triggerRule
+  traceShowM =<< (('a','2',) <$> use ruleHistories)
+
 
 instance Functor m => Functor (RuleT m) where
   fmap f (RLook t v k) = RLook t v (\ mt -> map f <$> k mt)
@@ -355,14 +375,24 @@ instance (Monad m) => Monad (RuleT m) where
   RLift as      >>= f = RLift $ map (>>= f) <$> as
   RPure a       >>= f = f a
 
+-- FIXME :: So the issue here is that, in the generation of the rule we execute
+--         a portion of the internal structure, while not building a proper
+--         log of actions. in effect, the RuleIBs we return don't have the
+--         parent action information. I think the only way to do this properly
+--         is to refactor our evalRule into something more like a continuation
+--         monad, were we build up an inner sequence of actions.
+
 -- | Pull out one layer of the rule as an action we can run, recurse on
 --   lift operations.
 evalRule :: forall a m. (BSMC m) => RuleIB m a -> RTIB m [RuleIB m a]
 evalRule (RLook _ v k) = do
+  traceM $ "Running Rule Look " <> show  v
   addToWatched (forceTID v)
-  lift (lookupVar $ force v) >>= (map pure . k)
+  term <- lift (lookupVar $ force v)
+  pure <$> k term
 
-evalRule (RLift as) = map mconcat . traverse evalRule =<< as
+evalRule (RLift as) = do
+  map mconcat . join $ sequenceA . map evalRule <$> as
 
 evalRule (RPure _) = pure []
 
@@ -604,11 +634,13 @@ setTermValue t v = do
     Just _ -> panic "unreachable"
 
 pushUpdates :: forall m. (BSMC m) => ExID -> BSM m ()
-pushUpdates e = do
+pushUpdates e = traceShow ('v', showExID e) $ do
   case e of
-    (RID r) -> triggerRule r
+    (RID r) -> traceShow e $ triggerRule r
     _ -> pure ()
-  traverse_ pushUpdates =<< getDependents @m e
+  deps <- getDependents @m e
+  traceShowM ('p', e, deps)
+  traverse_ pushUpdates deps
 
 -- getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
 --   => t a -> t b -> Either e [(a,b)]
@@ -646,8 +678,11 @@ redirectRelations o n = {-traceShow ('r',o,n) $-} getPropertyPairsS f' mappendM'
 redirectRules :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 redirectRules o n = do
   rh <- use ruleHistories
+  traceM $ "Redirecting rule " <> show o <> " to " <> show n
   res <- traverse mergeRuleHistories rh
+  traceShowM =<< (('3',) <$> use ruleHistories)
   ruleHistories .= map snd res
+  traceShowM =<< (('4',) <$> use ruleHistories)
   pure (foldr (||) False . map fst $ res)
 
   where
@@ -718,7 +753,11 @@ runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
   (rs, ns) <- getIntBindT $  runStateT (evalRule rule) rm
-  pure $ map (\ a -> (ns,a)) rs
+  pure $ map (\ a -> (ns, a)) rs
+
+-- TODO :: Okay, the issue is that we are not properly preserving the full,
+--        executable monad on lookup or anything, eval rule in particular ends
+--        up discarding a bunch of .
 
 -- | History aware lookup of rules.
 insertRule :: forall m. (BSMC m) => RuleMeta -> RuleIB m () -> BSM m RuleID
@@ -727,12 +766,18 @@ insertRule rm@(RuleMeta hist watch _) rule = do
     Just rid -> pure rid
     Nothing  -> do
       rid <- newIdent
+      traceShowM ('i', rid, hist)
+      -- let mTarget = case rule of
+      --       (RLook t v k) -> Just $ TID t (forceTID v)
+      --       _ -> Nothing
       rules . at rid .= Just (Waiting (typeRep @(IntBindT m)) rm rule)
       for (HS.toList watch) (\ t -> do
         t' <- getRepExID t
         (RID rid) `dependsOn` t')
       hist' <- freshenHist hist
+      traceShowM =<< (('1',) <$> use ruleHistories)
       ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
+      traceShowM =<< (('2',) <$> use ruleHistories)
       pure rid
 
   where
@@ -758,6 +803,7 @@ getRepExID (TID tt t) = TID tt <$> getRepresentative t
 lookupRule :: forall m. (BSMC m) => RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
 lookupRule r = do
   r' <- getRuleRep r
+  traceM $ "looking up: " <> show r <> " -- " <> show r'
   use (rules . at r') >>= \case
     Nothing -> panic "unreachable"
     Just (Merged _) -> panic "unreachable"
@@ -768,6 +814,7 @@ lookupRule r = do
 lookupRuleHistory :: forall m. (BSMC m) => RuleHistory -> BSM m (Maybe RuleID)
 lookupRuleHistory rh@(RuleHistory fam _)
   = do
+    traceM $ "rh lookup: " <> show rh
     hist' <- freshenHist rh
     (>>= (lookupSteps $ hist' ^. nextStep)) <$> use (ruleHistories . at fam)
 
@@ -791,7 +838,8 @@ getRuleRep r = use (rules . at r) >>= \case
 triggerRule :: forall m. (BSMC m) => RuleID -> BSM m ()
 triggerRule rid = lookupRule rid >>= \case
   Nothing -> panic "unreachable"
-  Just rs -> do
+  Just rs -> traceShow ('t', rid) $ do
+    traceShowM =<< (('t','r',) <$> use ruleHistories)
     results <- uncurry runRule rs
     traverse_ (triggerRule <=< uncurry insertRule) results
 

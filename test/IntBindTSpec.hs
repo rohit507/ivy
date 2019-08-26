@@ -195,6 +195,7 @@ prt_singleRule :: forall a e m. ( MonadProperty e (Prop (ConstF a)) m
                                , Num a)
              => Gen a -> PropertyT m ()
 prt_singleRule gen = do
+  traceM " ## Begin Test ## "
   a <- ConstF <$> forAll gen
   annotateShow a
   b <- ConstF <$> forAll gen
@@ -208,8 +209,11 @@ prt_singleRule gen = do
   lift . addRule $ lookupVar va >>= \case
       Nothing -> panic "va should already be assigned"
       Just n -> do
+        traceM $ "THIS IS N :" <> show n
+        traceM $ "THIS IS N++ :" <> show (n + 1)
         vp <- Prop @(ConstF a) `propertyOf` va
-        _ <- bindVar vp (n + 1)
+        res <- bindVar vp (n + 1)
+        traceM $ "THIS IS RES :" <> show res
         skip
   annotateShow =<< lookupVar va
   annotateShow =<< lookupVar vp
@@ -222,6 +226,7 @@ prt_singleRule gen = do
   annotateShow =<< lookupVar vp
   lookupVar va >>= (=== Just b)
   lookupVar vp >>= (=== Just (b + 1))
+  traceM " ## End Test ## "
   skip
 
 hprop_singleRule :: H.Property

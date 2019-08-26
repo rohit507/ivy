@@ -62,9 +62,9 @@ instance (Show a) => Show (TypeMap (OfType a)) where
 errEq :: forall e e' m. (MonadError e m, MonadError e' m) :- (e ~ e')
 errEq = unsafeCoerceConstraint
 
-whenJust :: (Applicative m) => Maybe a -> (a -> m ()) -> m ()
-whenJust Nothing _ = skip
-whenJust (Just a) f = f a
+whenJust :: (Applicative m) => Maybe a -> (a -> m b) -> m (Maybe b)
+whenJust Nothing _ = pure Nothing
+whenJust (Just a) f = Just <$> f a
 
 liftEither :: MonadError e m => Either e a -> m a
 liftEither = either throwError pure

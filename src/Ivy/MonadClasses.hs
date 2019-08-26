@@ -54,6 +54,7 @@ import Data.HashSet (HashSet)
 --   to new values, and declare that one variable should be redirected into
 --   another.
 class ( Typeable t
+      , Typeable m
       , Traversable t
       , JoinSemiLattice1 e t
       , Eq1 t

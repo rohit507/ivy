@@ -49,7 +49,9 @@ type BSMC m = (Monad m, Typeable m)
 
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
 
-type BSMTC m t = (BSMC m, BSTC t, Newtype (Var (IntBindT m) t) Int)
+type BSMTC m t = (BSMC m, BSTC t
+                 , Newtype (Var (IntBindT m) t) Int
+                 )
 
 type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
 
@@ -104,6 +106,13 @@ forceVID = force
 data ExID where
   TID :: (BSTC t) => TypeRep t -> TermID t -> ExID
   RID :: () => RuleID -> ExID
+
+instance Show ExID where
+  show = showExID
+
+showExID :: ExID -> String
+showExID (TID tt t) = "(TID " {- (typeRep @(" <> show tt <> ")) ("-} <> show t <> "))"
+showExID (RID r) = "(RID (" <> show r <> "))"
 
 instance Eq ExID where
   (RID r) == (RID r') = r == r'
@@ -259,18 +268,26 @@ instance MFunctor IntBindT where
 data RuleHistories = RuleHistories
   { _term :: Maybe RuleID
   , _nextStep :: HashMap ExID RuleHistories }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
 data RuleHistory = RuleHistory
   { _family :: RuleID
   , _nextStep :: [ExID] }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Show)
 
-type SomeVarC m t =  (Ord (Var m t), Typeable m, Typeable t, Hashable (Var m t))
+type SomeVarC m t =  (Ord (Var m t)
+                     , Typeable m
+                     , Typeable t
+                     , Hashable (Var m t)
+                     , Show (Var m t))
 
 data SomeVar where
   SomeVar :: SomeVarC m t
     => TypeRep m -> TypeRep t -> Var m t -> SomeVar
+
+instance Show SomeVar where
+  show (SomeVar m t v) = "(SomeVar (typeRep @(" <> show m <> ")) (typeRep @("
+     <> show t <> ")) ("<> show v <> "))"
 
 instance Eq SomeVar where
   (SomeVar m t v) == (SomeVar m' t' v')
@@ -329,7 +346,7 @@ type RuleIB m = Rule (IntBindT m)
 --            continuation monad and a free monad. See if there's
 --            someway to refactor into those.
 data RuleT m a where
-  RLook :: (MonadBind e m t, Eq1 t, BSTC t)
+  RLook :: (MonadBind e m t, Eq1 t, BSMTC m t)
     => { _type :: TypeRep t
        , _var :: Var m t
        , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
