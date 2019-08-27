@@ -359,8 +359,12 @@ type RuleIB m = Rule (IntBindT m)
 --     => { _actions :: a
 --        } -> RuleT m a
 
+-- What is the primitive step?
+-- Action you can run in RT that produces either an effect or an
+-- a next stage of lookup .
 
 data RuleT m a where
+
   RLook :: (MonadBind e m t, Eq1 t, BSMTC m t)
     => { _type :: TypeRep t
        , _var :: Var m t
@@ -375,6 +379,13 @@ data RuleT m a where
     => { _action :: RT m a
        } -> RuleT m a
 
+-- Hmm, there's a bunch of stuff here I'm not quite happy with.
+-- Can I even do this in a decent way? the scribe monad relied on the
+-- each composition of `M ()`
+
+-- So as the computation runs, it can spit out new rules which we can deal with?
+-- or do we just sort of treat it as
+
 execRule :: (Monad m)
   => RT m ()
   -> (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
@@ -387,7 +398,7 @@ execRule annotate lookup (RLook t v p) = do
 execRule _ _ (RStep s) = s
 execRule _ _ (RExec a) = a *> pure []
 
--- | pushes an action down to the execution level of the rule. f
+-- | pushes an action down to the execution level of the rule.
 actRule :: (Monad m) => (a -> RT m b) -> RuleT m a -> RuleT m b
 actRule r (RLook t v p) = RLook t v (\ mt -> map (actRule r) <$> p mt)
 actRule r (RStep s) = RStep (map (actRule r) <$> s)
