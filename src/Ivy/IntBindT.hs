@@ -38,8 +38,6 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
-import qualified GHC.Base (fmap)
--- import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 import qualified Data.Set as S
 
@@ -361,26 +359,15 @@ addRuleS r = do
   traceShowM =<< (('a','2',) <$> use ruleHistories)
 
 
-instance Functor m => Functor (RuleT m) where
-  fmap f (RLook t v k) = RLook t v (\ mt -> map f <$> k mt)
-  fmap f (RLift as) = RLift $ map (map f) <$> as
-  fmap f (RPure a)  = RPure $ f a
-
-instance (Monad m) => Applicative (RuleT m) where
-  pure a = RPure a
-  (<*>) = ap
-
-instance (Monad m) => Monad (RuleT m) where
-  RLook t v   k >>= f = RLook t v   (\ mt -> (>>= f) <$> k mt)
-  RLift as      >>= f = RLift $ map (>>= f) <$> as
-  RPure a       >>= f = f a
-
--- FIXME :: So the issue here is that, in the generation of the rule we execute
+-- FIXME :: So the issue here is that, in  lw5the generation of the rule we execute
 --         a portion of the internal structure, while not building a proper
 --         log of actions. in effect, the RuleIBs we return don't have the
 --         parent action information. I think the only way to do this properly
 --         is to refactor our evalRule into something more like a continuation
 --         monad, were we build up an inner sequence of actions.
+
+-- Alternate?
+
 
 -- | Pull out one layer of the rule as an action we can run, recurse on
 --   lift operations.
@@ -388,26 +375,12 @@ evalRule :: forall a m. (BSMC m) => RuleIB m a -> RTIB m [RuleIB m a]
 evalRule (RLook _ v k) = do
   traceM $ "Running Rule Look " <> show  v
   addToWatched (forceTID v)
-  term <- lift (lookupVar $ force v)
-  pure <$> k term
+  pure . pure $ RLift [(lift . lookupVar . force $ v) >>= k ]
 
-evalRule (RLift as) = do
-  map mconcat . join $ sequenceA . map evalRule <$> as
+evalRule (RLift as) = pure . pure $ (RLift as)
 
 evalRule (RPure _) = pure []
 
--- | FIXME :: `catchError` does nothing in the current instance, since
---            it requires us to be able to unify the inner and outer error type.
-instance (MonadError e m) => MonadError e (RuleT m) where
-  throwError = lift . throwError
-
-  catchError m _ = m
-  -- catchError (RLook t v k) r   = RLook t v (\ mt -> catchError (k mt) (pure . r))
-  -- catchError (RBind t v a k) r = RBind t v a (\ nt -> catchError (k nt) (pure . r))
-  -- catchError (RLift as) r      = RLift $ map (\ a -> catchError a r) <$> as
-
-instance MonadTrans RuleT where
-  lift = RLift . map (pure . RPure) . lift
 
 instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 

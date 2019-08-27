@@ -30,6 +30,8 @@ import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 -- import qualified Data.HashSet as HS
 -- import qualified GHC.Base (Functor, fmap)
+import qualified GHC.Base (fmap)
+-- import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 
@@ -345,20 +347,98 @@ type RuleIB m = Rule (IntBindT m)
 --   FIXME :: This looks suspiciously like some conbination of a
 --            continuation monad and a free monad. See if there's
 --            someway to refactor into those.
+-- data RuleT m a where
+--   RLook :: (MonadBind e m t, Eq1 t, BSMTC m t)
+--     => { _type :: TypeRep t
+--        , _var :: Var m t
+--        , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
+--        } -> RuleT m a
+--   RLift :: ()
+--     => { _action :: RT m [RuleT m a] } -> RuleT m a
+--   RPure :: ()
+--     => { _actions :: a
+--        } -> RuleT m a
+
+
 data RuleT m a where
   RLook :: (MonadBind e m t, Eq1 t, BSMTC m t)
     => { _type :: TypeRep t
        , _var :: Var m t
-       , _process :: Maybe (t (Var m t)) -> RT m (RuleT m a)
+       , _process :: Maybe (t (Var m t)) -> RT m [RuleT m a]
        } -> RuleT m a
 
-  RLift :: ()
-    => { _action :: RT m [RuleT m a] } -> RuleT m a
-
-  RPure :: ()
-    => { _actions :: a
+  RStep :: ()
+    => { _progress :: RT m [RuleT m a]
        } -> RuleT m a
 
+  RExec :: ()
+    => { _action :: RT m a
+       } -> RuleT m a
+
+execRule :: (Monad m)
+  => RT m ()
+  -> (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
+         => Var m t -> RT m (Maybe (t (Var m t))))
+  -> RuleT m a
+  -> RT m [RuleT m a]
+execRule annotate lookup (RLook t v p) = do
+  annotate
+  pure . pure $ RStep (lookup v >>= p)
+execRule _ _ (RStep s) = s
+execRule _ _ (RExec a) = a *> pure []
+
+-- | pushes an action down to the execution level of the rule. f
+actRule :: (Monad m) => (a -> RT m b) -> RuleT m a -> RuleT m b
+actRule r (RLook t v p) = RLook t v (\ mt -> map (actRule r) <$> p mt)
+actRule r (RStep s) = RStep (map (actRule r) <$> s)
+actRule r (RExec a) = RExec $ a >>= r
+
+instance Functor m => Functor (RuleT m) where
+  fmap f (RLook t v p) = RLook t v (\  mt -> map (map f) <$> p mt)
+  fmap f (RStep s) = RStep $ map (map f) <$> s
+  fmap f (RExec a) = RExec $ f <$> a
+
+instance (Monad m) => Applicative (RuleT m) where
+  pure = RExec . pure
+
+  (*>) :: RuleT m (a -> b) -> RuleT m a -> RuleT m b
+  (*>) = ap
+
+instance (Monad m) => Monad (RuleT m) where
+  (RLook t v p) >>= k = undefined
+  (RStep s) >>= k = undefined
+  (RExec a) >>= k = RStep $ do
+    a' <- a
+    case k a' of
+      RLook t v p ->
+
+-- | FIXME :: `catchError` does nothing in the current instance, since
+--            it requires us to be able to unify the inner and outer error type.
+instance (MonadError e m) => MonadError e (RuleT m) where
+  throwError = lift . throwError
+
+  catchError m _ = m
+  -- catchError (RLook t v k) r   = RLook t v (\ mt -> catchError (k mt) (pure . r))
+  -- catchError (RBind t v a k) r = RBind t v a (\ nt -> catchError (k nt) (pure . r))
+  -- catchError (RLift as) r      = RLift $ map (\ a -> catchError a r) <$> as
+
+instance MonadTrans RuleT where
+  lift = RLift . map (pure . RPure) . lift
+
+--
+--  evalRule (RLook t v k) = do
+--     addToWatched (force v)
+--     pure . pure . RStep $ do
+--        var <- lift . lookupVar . force $ v
+--        pure $ k var
+--  evalRule (RStep p) = do
+--     rules <- p
+--     mconcat <$> traverse evalRule rules
+--  evalRule (RExec a) = a *> pure []
+--
+-- Okay I think this might not be possible to do without continuations, esp
+-- since we need to wrap elements of our actions and still preserve the 'log'
+-- of things that need to be done.
 rtLift :: (Monad m, Applicative (RuleT m)) => RT m a -> RuleT m a
 rtLift m = RLift $ m >>= pure . pure . pure
 
