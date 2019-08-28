@@ -40,8 +40,6 @@ import Data.HashSet (HashSet)
 import qualified Data.HashSet as HS
 import qualified Algebra.Graph.AdjacencyMap as G
 import qualified Data.Set as S
-
-
 -- import Data.Partition (Partition)
 -- import qualified Data.Partition as P
 
@@ -96,7 +94,7 @@ instance (BSEMTC e m r)
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
   nv :: TermID t <- newIdent
-  traceShowM ('f', nv)
+  -- traceShowM ('f', nv)
   setTermState nv freeTermState
   addTermToDeps nv
   addTermToIdents nv
@@ -112,7 +110,7 @@ bindVarS :: forall m t. (BSMTC m t) => TermID t -> t (TermID t) -> BSM m (TermID
 bindVarS v t = do
   mot <- lookupVarS v
   nt  <- freshenTerm t
-  traceShowM =<< (('b','p',v,) <$> use ruleHistories)
+  -- traceShowM =<< (('b','p',v,) <$> use ruleHistories)
   -- traceShowM =<< (('b','d',) <$> use dependencies)
   depChange <- map (fromMaybe False) . whenJust mot $ \ ot -> do
     let otd = foldMap (HS.singleton . toExID) ot
@@ -135,11 +133,11 @@ bindVarS v t = do
   -- When the term has changed in some salient way we need to push updates.
   let dirty = depChange ||
                 (not . fromMaybe False $ (liftEq (==)) <$> (Just nt) <*> mot)
-  when (traceShowId dirty) $ do
-    traceShowM =<< (('b','1',) <$> use ruleHistories)
+  when (dirty) $ do
+    -- traceShowM =<< (('b','1',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',) <$> use dependencies)
     pushUpdates . toExID =<< getRepresentative v'
-    traceShowM =<< (('b','2',) <$> use ruleHistories)
+    -- traceShowM =<< (('b','2',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',) <$> use dependencies)
   getRepresentative v'
 
@@ -186,7 +184,7 @@ propertyOfS _ v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep
   Nothing -> do
     r :: TermID (To p) <- freeVarS
     setProperty @e (typeRep @p) v r
-    traceShowM ('p',r)
+    -- traceShowM ('p',r)
     pure r
   Just r -> pure r
 
@@ -346,9 +344,9 @@ instance (BSEMC e m) => MonadRule e (IntBindT m) where
 addRuleS :: (BSMC m) => RuleIB m () -> BSM m ()
 addRuleS r = do
   rid :: RuleID <- newIdent
-  traceShowM =<< (('a','1',rid,) <$> use ruleHistories)
+  -- traceShowM =<< (('a','1',rid,) <$> use ruleHistories)
   insertRule (newRuleMeta rid) r >>= triggerRule
-  traceShowM =<< (('a','2',) <$> use ruleHistories)
+  -- traceShowM =<< (('a','2',) <$> use ruleHistories)
 
 instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
@@ -371,31 +369,28 @@ instance ( MonadRule e m
          ) => MonadAssume e (RuleT m) t where
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeEqual a b m = RStep $ do
-    old <- use @RuleMeta assumptions
-    assumptions %= addEqAssertion (toSomeVar @m a) (toSomeVar @m b)
-
-     a <- m
-     rtLift $ assumptions .= old
-     pure a
+  assumeEqual a b m = do
+    old <- RExec $ use @RuleMeta assumptions
+    RExec $ assumptions %= addEqAssertion (toSomeVar @m a) (toSomeVar @m b)
+    a <- m
+    RExec $ assumptions .= old
+    pure a
 
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeUnified a b m = RLift $ do
-    old <- use @RuleMeta assumptions
-    assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
-    rtDrop $ do
-     a <- m
-     rtLift $ assumptions .= old
-     pure a
+  assumeUnified a b m = do
+    old <- RExec $ use @RuleMeta assumptions
+    RExec $ assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
+    a <- m
+    RExec $ assumptions .= old
+    pure a
 
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeSubsumed a b m = RLift $ do
-    old <- use @RuleMeta assumptions
-    assumptions %= addSubAssertion (toSomeVar @m a) (toSomeVar @m b)
-    rtDrop $ do
-     a <- m
-     rtLift $ assumptions .= old
-     pure a
+  assumeSubsumed a b m = do
+    old <- RExec $ use @RuleMeta assumptions
+    RExec $ assumptions %= addSubAssertion (toSomeVar @m a) (toSomeVar @m b)
+    a <- m
+    RExec $ assumptions .= old
+    pure a
 
   assertEqual :: Var m t -> Var m t -> RuleT m ()
   assertEqual a b = lift $ assertEqual a b
@@ -407,32 +402,29 @@ instance ( MonadRule e m
   assertSubsumed a b = lift $ assertSubsumed a b
 
   isAssumedEqual :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedEqual a b = RLift $ do
-    assumed :: Assertions SomeVar <- use assumptions
-    pure . pure $ do
-      let a' = getRep (toSomeVar @m a) assumed
-          b' = getRep (toSomeVar @m b) assumed
-      pure (isAssertedEqual a' b' assumed)
-        ||^ (liftAssumed @m @t isAssumedEqual a' b')
+  isAssumedEqual a b = do
+    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    let a' = getRep (toSomeVar @m a) assumed
+        b' = getRep (toSomeVar @m b) assumed
+    pure (isAssertedEqual a' b' assumed)
+      ||^ (liftAssumed @m @t isAssumedEqual a' b')
 
   isAssumedUnified :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedUnified a b = RLift $ do
-    assumed :: Assertions SomeVar <- use assumptions
-    pure . pure $ do
-      let a' = getRep (toSomeVar @m a) assumed
-          b' = getRep (toSomeVar @m b) assumed
-      pure (isAssertedUnified a' b' assumed)
-        ||^ (liftAssumed @m @t isAssumedUnified a' b')
+  isAssumedUnified a b = do
+    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    let a' = getRep (toSomeVar @m a) assumed
+        b' = getRep (toSomeVar @m b) assumed
+    pure (isAssertedUnified a' b' assumed)
+      ||^ (liftAssumed @m @t isAssumedUnified a' b')
 
   -- | It is unclear is this is
   isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
-  isAssumedSubsumed a b = RLift $ do
-    assumed :: Assertions SomeVar <- use assumptions
-    pure . pure $ do
-      let a' = getRep (toSomeVar @m a) assumed
-          b' = getRep (toSomeVar @m b) assumed
-      pure (isAssertedSubsumed a' b' assumed)
-        ||^ (liftAssumed @m @t isAssumedSubsumed a' b')
+  isAssumedSubsumed a b = do
+    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    let a' = getRep (toSomeVar @m a) assumed
+        b' = getRep (toSomeVar @m b) assumed
+    pure (isAssertedSubsumed a' b' assumed)
+      ||^ (liftAssumed @m @t isAssumedSubsumed a' b')
 
 liftAssumed :: forall m t d. (Typeable m, Typeable t)
   => (Var m t -> Var m t -> d) -> SomeVar -> SomeVar -> d
@@ -473,15 +465,15 @@ instance (MonadProperties e m
       -> (a -> a -> RuleT m a)
       -> a
       -> Var m t -> Var m t -> RuleT m a
-  getPropertyPairs f append empty a b = RLift $ do
+  getPropertyPairs f append empty a b = do
     r :: [RuleT m a] <- lift $ getPropertyPairs
         (\ p t -> pure . pure $ f p t)
         (\ a b -> pure $ a <> b)
         [] a b
-    rtDrop $ foldrM append empty =<< sequenceA r
+    foldrM append empty =<< sequenceA r
 
 instance (Monad m) => MonadFail (RuleT m) where
-  fail _ = RLift $ pure []
+  fail _ = RStep skip (pure [])
 
 instance (MonadRule e m) => MonadRule e (RuleT m) where
   type Rule (RuleT m) = RuleT m
@@ -575,12 +567,15 @@ setTermValue t v = do
     Just _ -> panic "unreachable"
 
 pushUpdates :: forall m. (BSMC m) => ExID -> BSM m ()
-pushUpdates e = traceShow ('v', showExID e) $ do
+pushUpdates e = do
+  -- traceShowM ('v', showExID e)
   case e of
-    (RID r) -> traceShow e $ triggerRule r
+    (RID r) -> do
+      -- traceShow e
+      triggerRule r
     _ -> pure ()
   deps <- getDependents @m e
-  traceShowM ('p', e, deps)
+  -- traceShowM ('p', e, deps)
   traverse_ pushUpdates deps
 
 -- getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
@@ -610,7 +605,6 @@ redirectRelations o n = {-traceShow ('r',o,n) $-} getPropertyPairsS f' mappendM'
       mappendM' :: Bool -> Bool -> BSM m Bool
       mappendM' a b = pure $ a || b
 
-
 -- | traverse the rule histories unifying the two terms, and turning any
 --   conflicts into redirections. Return if changes where made.
 --
@@ -619,11 +613,11 @@ redirectRelations o n = {-traceShow ('r',o,n) $-} getPropertyPairsS f' mappendM'
 redirectRules :: forall m t. (BSMTC m t) => TermID t -> TermID t -> BSM m Bool
 redirectRules o n = do
   rh <- use ruleHistories
-  traceM $ "Redirecting rule " <> show o <> " to " <> show n
+  -- traceM $ "Redirecting rule " <> show o <> " to " <> show n
   res <- traverse mergeRuleHistories rh
-  traceShowM =<< (('3',) <$> use ruleHistories)
+  -- traceShowM =<< (('3',) <$> use ruleHistories)
   ruleHistories .= map snd res
-  traceShowM =<< (('4',) <$> use ruleHistories)
+  -- traceShowM =<< (('4',) <$> use ruleHistories)
   pure (foldr (||) False . map fst $ res)
 
   where
@@ -641,7 +635,6 @@ redirectRules o n = do
           result = map snd $ updates
       pure (dirty, result)
 
-
     mergeRuleHistories ::  RuleHistories -> BSM m (Bool, RuleHistories)
     mergeRuleHistories (RuleHistories t ns) = do
       (d, ns') <- mergeRuleHistMap ns
@@ -658,7 +651,6 @@ redirectRules o n = do
       then (pure False)
       else ((rules . at o .= Just (Merged n)) *> pure True)
 
-
 setProperty :: forall e p m proxy. (Property p, BSEMTC e m (From p), BSEMTC e m (To p))
             => proxy p -> TermID (From p) -> TermID (To p) -> BSM m ()
 setProperty _ term prop = {- traceShow ('s', term,prop, typeRep @p) $ -} do
@@ -674,7 +666,7 @@ getProperty :: forall e p m proxy. (Property p, BSEMTC e m (From p), BSEMTC e m 
             => proxy p -> TermID (From p) -> BSM m (Maybe (TermID (To p)))
 getProperty _ term = do
   res <- TM.lookup (typeRep @p) <$> getPropMap term
-  o <- pure $ {- traceShow ('g', term, res, typeRep @p) $ -} res >>= \ (PropRel te tp tid) -> do
+  o <- pure $ res >>= \ (PropRel te tp tid) -> do
     HRefl <- eqTypeRep te (typeRep @e)
     HRefl <- eqTypeRep tp (typeRep @p)
     pure tid
@@ -693,7 +685,9 @@ getPropMap t = do
 runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
-  (rs, ns) <- getIntBindT $  runStateT (evalRule rule) rm
+  -- traceM "Running Rule"
+  (rs, ns) <- getIntBindT $ runStateT
+    (execRule addToWatched (lift . lookupVar) rule) rm
   pure $ map (\ a -> (ns, a)) rs
 
 -- TODO :: Okay, the issue is that we are not properly preserving the full,
@@ -707,7 +701,7 @@ insertRule rm@(RuleMeta hist watch _) rule = do
     Just rid -> pure rid
     Nothing  -> do
       rid <- newIdent
-      traceShowM ('i', rid, hist)
+      -- traceShowM ('i', rid, hist)
       -- let mTarget = case rule of
       --       (RLook t v k) -> Just $ TID t (forceTID v)
       --       _ -> Nothing
@@ -716,9 +710,9 @@ insertRule rm@(RuleMeta hist watch _) rule = do
         t' <- getRepExID t
         (RID rid) `dependsOn` t')
       hist' <- freshenHist hist
-      traceShowM =<< (('1',) <$> use ruleHistories)
+      -- traceShowM =<< (('1',) <$> use ruleHistories)
       ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
-      traceShowM =<< (('2',) <$> use ruleHistories)
+      -- traceShowM =<< (('2',) <$> use ruleHistories)
       pure rid
 
   where
@@ -744,7 +738,7 @@ getRepExID (TID tt t) = TID tt <$> getRepresentative t
 lookupRule :: forall m. (BSMC m) => RuleID -> BSM m (Maybe (RuleMeta, RuleIB m ()))
 lookupRule r = do
   r' <- getRuleRep r
-  traceM $ "looking up: " <> show r <> " -- " <> show r'
+  -- traceM $ "looking up: " <> show r <> " -- " <> show r'
   use (rules . at r') >>= \case
     Nothing -> panic "unreachable"
     Just (Merged _) -> panic "unreachable"
@@ -755,7 +749,7 @@ lookupRule r = do
 lookupRuleHistory :: forall m. (BSMC m) => RuleHistory -> BSM m (Maybe RuleID)
 lookupRuleHistory rh@(RuleHistory fam _)
   = do
-    traceM $ "rh lookup: " <> show rh
+    -- traceM $ "rh lookup: " <> show rh
     hist' <- freshenHist rh
     (>>= (lookupSteps $ hist' ^. nextStep)) <$> use (ruleHistories . at fam)
 
@@ -779,13 +773,14 @@ getRuleRep r = use (rules . at r) >>= \case
 triggerRule :: forall m. (BSMC m) => RuleID -> BSM m ()
 triggerRule rid = lookupRule rid >>= \case
   Nothing -> panic "unreachable"
-  Just rs -> traceShow ('t', rid) $ do
-    traceShowM =<< (('t','r',) <$> use ruleHistories)
+  Just rs -> do
+    -- traceShowM ('t', rid)
+    -- traceShowM =<< (('t','r',) <$> use ruleHistories)
     results <- uncurry runRule rs
     traverse_ (triggerRule <=< uncurry insertRule) results
 
 -- | adds a term to the watchlist and the history
-addToWatched :: forall m t. (BSMTC m t) => TermID t -> RTIB m ()
+addToWatched :: forall m t. (BSMTC m t) => VarIB m t -> RTIB m ()
 addToWatched t = do
-  watched %= HS.insert (toExID t)
-  history . nextStep %= (<> [toExID t])
+  watched %= HS.insert (toExID $ forceTID t)
+  history . nextStep %= (<> [toExID $ forceTID t])

@@ -133,7 +133,6 @@ instance Hashable ExID where
   hashWithSalt s (RID r) = hashWithSalt s r
   hashWithSalt s (TID _ t) = hashWithSalt s t
 
-
 class ToExID a where
   toExID :: a -> ExID
 
@@ -208,7 +207,6 @@ data DefaultRule (t :: Type -> Type) where
 data RMap
 type instance Item RMap (Term t) = DefaultRule t
 
-
 type RuleMap = TypeMap RMap
 
 data BindingState = BindingState
@@ -238,7 +236,6 @@ freeBoundState = BoundState Nothing TM.empty
 
 freeTermState :: TermState t
 freeTermState = Bound freeBoundState
-
 
 data PropRel where
   PropRel :: forall e p. (BSETC e (From p), BSETC e (To p), Property p)
@@ -379,8 +376,8 @@ execRule annotate lookup (RLook _ v a o) = do
   pure . pure $ RStep ((,) <$> lookup v <*> a) (o term)
 
 execRule annotate lookup (RStep a o) = do
-  f <- map (\ f -> RExec a >>= f) <$> o
-  mconcat <$> traverse (execRule annotate lookup) f
+  map (\ f -> RExec a >>= f) <$> o
+  -- mconcat <$> traverse (execRule annotate lookup) f
 
 execRule _ _ (RExec a) = a *> pure []
 
