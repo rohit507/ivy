@@ -240,8 +240,7 @@ freeTermState :: TermState t
 freeTermState = Bound freeBoundState
 
 
--- data
-  PropRel where
+data PropRel where
   PropRel :: forall e p. (BSETC e (From p), BSETC e (To p), Property p)
     => TypeRep e -> TypeRep p -> TermID (To p) -> PropRel
 
@@ -329,7 +328,6 @@ fromSomeVar (SomeVar tm tt v) = do
 toSomeVar :: forall m t. (SomeVarC m t) => Var m t -> SomeVar
 toSomeVar v = SomeVar (typeRep @m) (typeRep @t) v
 
-
 newRuleMeta :: RuleID -> RuleMeta
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
@@ -368,14 +366,15 @@ data RuleT m a where
        } -> RuleT m a
 
 execRule :: (Monad m)
-  => RT m ()
+  => (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
+         => Var m t -> RT m ())
   -> (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
          => Var m t -> RT m (Maybe (t (Var m t))))
   -> RuleT m a
   -> RT m [RuleT m a]
 
 execRule annotate lookup (RLook _ v a o) = do
-  annotate
+  annotate v
   term <- lookup v
   pure . pure $ RStep ((,) <$> lookup v <*> a) (o term)
 

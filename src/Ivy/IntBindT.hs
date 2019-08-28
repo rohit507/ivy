@@ -192,7 +192,6 @@ propertyOfS _ v = {- traceShow ('o', v, typeRep @p) $ -} getProperty @e (typeRep
 
 instance (BSEMC e m) => MonadProperties e (IntBindT m) where
 
-
   getPropertyPairs :: forall a t. (MonadBind e (IntBindT m) t)
       => (forall p proxy. ( From p ~ t
                          , MonadAssume e (IntBindT m) (To p)
@@ -206,14 +205,12 @@ instance (BSEMC e m) => MonadProperties e (IntBindT m) where
 
     where
 
-
       f' :: (forall p proxy. (From p ~ t, Property p, BSEMTC e m (To p))
                     => proxy p -> These (TermID (To p)) (TermID (To p)) ->BSM m a)
       f' p t = getIntBindT $ (f p (bimap force force t) :: IntBindT m a)
 
       mappendM' :: a -> a -> BSM m a
       mappendM' a b = getIntBindT $ mappendM a b
-
 
 getPropertyPairsS :: forall a e m t. (BSEMC e m, BSTC t)
     => (forall p proxy. (From p ~ t, Property p, BSEMTC e m (To p))
@@ -281,9 +278,6 @@ getPropertyPairsS f mappend mempty a b = do
       HRefl <- eqTypeRep (typeRep @(From p)) (typeRep @t)
       pure $ f p (That v)
 
-
-
-
 instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m) t where
 
   assumeEqual :: VarIB m t -> VarIB m t -> IntBindT m a -> IntBindT m a
@@ -298,7 +292,6 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
   assumeSubsumed a b (IntBindT m) = IntBindT $
     assumeSubsumedS @_ @_ @t (toSomeVar @(IntBindT m) a) (toSomeVar @(IntBindT m) b) m
 
-
   assertEqual :: VarIB m t -> VarIB m t -> IntBindT m ()
   assertEqual a b = IntBindT $
     assertions %= addEqAssertion (toSomeVar @(IntBindT m) a) (toSomeVar @(IntBindT m) b)
@@ -306,7 +299,6 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
   assertUnified :: VarIB m t -> VarIB m t -> IntBindT m ()
   assertUnified a b = IntBindT $
     assertions %= addUniAssertion (toSomeVar @(IntBindT m) a) (toSomeVar @(IntBindT m) b)
-
 
   assertSubsumed :: VarIB m t -> VarIB m t -> IntBindT m ()
   assertSubsumed a b = IntBindT $
@@ -358,30 +350,6 @@ addRuleS r = do
   insertRule (newRuleMeta rid) r >>= triggerRule
   traceShowM =<< (('a','2',) <$> use ruleHistories)
 
-
--- FIXME :: So the issue here is that, in  lw5the generation of the rule we execute
---         a portion of the internal structure, while not building a proper
---         log of actions. in effect, the RuleIBs we return don't have the
---         parent action information. I think the only way to do this properly
---         is to refactor our evalRule into something more like a continuation
---         monad, were we build up an inner sequence of actions.
-
--- Alternate?
-
-
--- | Pull out one layer of the rule as an action we can run, recurse on
---   lift operations.
-evalRule :: forall a m. (BSMC m) => RuleIB m a -> RTIB m [RuleIB m a]
-evalRule (RLook _ v k) = do
-  traceM $ "Running Rule Look " <> show  v
-  addToWatched (forceTID v)
-  pure . pure $ RLift [(lift . lookupVar . force $ v) >>= k ]
-
-evalRule (RLift as) = pure . pure $ (RLift as)
-
-evalRule (RPure _) = pure []
-
-
 instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   type Var (RuleT m) = Var m
@@ -390,7 +358,7 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   bindVar a b = lift $ bindVar a b
 
-  lookupVar a = RLook typeRep a (pure . pure)
+  lookupVar a = RLook typeRep a skip (\ m -> pure [(\ b -> pure m)])
 
   redirectVar a b = lift $ redirectVar a b
 
@@ -403,10 +371,10 @@ instance ( MonadRule e m
          ) => MonadAssume e (RuleT m) t where
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
-  assumeEqual a b m = RLift $ do
+  assumeEqual a b m = RStep $ do
     old <- use @RuleMeta assumptions
     assumptions %= addEqAssertion (toSomeVar @m a) (toSomeVar @m b)
-    rtDrop $ do
+
      a <- m
      rtLift $ assumptions .= old
      pure a
