@@ -10,6 +10,7 @@ License     : GPL-2
 Maintainer  : rkr@berkley.edu
 Stability   : experimental
 Portability : POSIX
+
 -}
 
 module Ivy.IntBindT
@@ -54,6 +55,12 @@ deriving newtype instance (Monad m) => Monad (IntBindT m)
 deriving newtype instance (MonadError e m) => MonadError e (IntBindT m)
 deriving newtype instance (MonadIO m) => MonadIO (IntBindT m)
 
+{-
+ So we've got a push system and a dirty set. That way we don't have to recurse
+ within rules or binding operations as items are changed.
+
+ same algorithm as before, push flags down, read the
+-}
 
 instance MonadTrans IntBindT where
   lift = IntBindT . lift

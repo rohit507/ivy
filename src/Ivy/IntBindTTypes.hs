@@ -61,9 +61,7 @@ type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
 
 type BSEMTC e m t = (BSETC e t, BSMTC m t, BSEMC e m)
 
-
 type UnivID = Int
-
 
 instance Newtype Int Int where
   pack = id
@@ -218,10 +216,21 @@ data BindingState = BindingState
   , _ruleHistories :: HashMap RuleID RuleHistories
   , _defaultRules  :: RuleMap
   , _assertions    :: Assertions SomeVar
+  , _dirtySet      :: HashSet ExID
   }
 
 initialBindingState :: Supply -> BindingState
-initialBindingState s = BindingState s mempty emptyTMap mempty G.empty mempty TM.empty mempty
+initialBindingState s = BindingState
+  { _supply        = s
+  , _idents        = mempty
+  , _terms_        = emptyTMap
+  , _rules         = mempty
+  , _dependencies  = G.empty
+  , _ruleHistories = mempty
+  , _defaultRules  = TM.empty
+  , _assertions    = mempty
+  , _dirtySet      = mempty
+  }
 
 data TermState t where
 
