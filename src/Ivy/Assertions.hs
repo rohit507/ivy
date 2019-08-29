@@ -30,6 +30,8 @@ data Assertions a = Assertions
   , _subsumptions :: HashMap a (HashSet a)
   }
 
+deriving instance Show a => Show (Assertions a)
+
 makeFieldsNoPrefix ''Assertions
 
 instance (Ord a, Hashable a) => Semigroup (Assertions a) where

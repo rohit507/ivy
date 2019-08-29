@@ -325,6 +325,8 @@ data RuleMeta = RuleMeta
   , _assumptions :: Assertions SomeVar
   }
 
+deriving instance Show RuleMeta
+
 fromSomeVar :: forall m t. (Typeable m, Typeable t) => SomeVar -> Maybe (Var m t)
 fromSomeVar (SomeVar tm tt v) = do
   HRefl <- eqTypeRep tm (typeRep @m)
@@ -380,15 +382,19 @@ execRule :: (Monad m)
   -> RT m [RuleT m a]
 
 execRule annotate lookup (RLook _ v a o) = do
+  traceM $ "Exec Look : " <> show v
   annotate v
   term <- lookup v
   pure . pure $ RStep ((,) <$> lookup v <*> a) (o term)
 
 execRule annotate lookup (RStep a o) = do
-  map (\ f -> RExec a >>= f) <$> o
-  -- mconcat <$> traverse (execRule annotate lookup) f
+  traceM $ "Exec Step "
+  fs <- map (\ f -> RExec a >>= f) <$> o
+  mconcat <$> traverse (execRule annotate lookup) fs
 
-execRule _ _ (RExec a) = a *> pure []
+execRule _ _ (RExec a) = do
+  traceM $ "Exec"
+  a *> pure []
 
 instance Functor m => Functor (RuleT m) where
   fmap f (RLook t v a o) = RLook t v a (\ t -> map (map f .) <$> o t)

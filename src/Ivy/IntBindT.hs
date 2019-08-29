@@ -117,7 +117,7 @@ bindVarS :: forall m t. (BSMTC m t) => TermID t -> t (TermID t) -> BSM m (TermID
 bindVarS v t = do
   mot <- lookupVarS v
   nt  <- freshenTerm t
-  -- traceShowM =<< (('b','p',v,) <$> use ruleHistories)
+  traceShowM =<< (('b','p',v,) <$> use ruleHistories)
   -- traceShowM =<< (('b','d',) <$> use dependencies)
   depChange <- map (fromMaybe False) . whenJust mot $ \ ot -> do
     let otd = foldMap (HS.singleton . toExID) ot
@@ -131,22 +131,23 @@ bindVarS v t = do
     -- traceShowM =<< (('b','b',) <$> use ruleHistories)
     unless (HS.null newDeps) $
       traverse_ (tv `dependsOn`) $ HS.toList newDeps
-    -- traceShowM =<< (('b','c',) <$> use ruleHistories)
+    traceShowM ('b','c',lostDeps, newDeps, otd, ntd)
     pure $ HS.null lostDeps || HS.null newDeps
   -- traceShowM =<< (('b','d',) <$> use ruleHistories)
   v' <- getRepresentative v
   setTermValue v' $ Just nt
   -- traceShowM =<< (('b','e',) <$> use ruleHistories)
   -- When the term has changed in some salient way we need to push updates.
-  let dirty = depChange ||
-                (not . fromMaybe False $ (liftEq (==)) <$> (Just nt) <*> mot)
+  let dirty = depChange || (not . fromMaybe False $ (liftEq (==)) <$> (Just nt) <*> mot)
   when (dirty) $ do
     -- traceShowM =<< (('b','1',) <$> use ruleHistories)
-    -- traceShowM =<< (('b','d',) <$> use dependencies)
-    pushUpdates . toExID =<< getRepresentative v'
+    traceShowM =<< (('b','d',depChange,dirty,) <$> use dependencies)
+    markDirty . toExID =<< getRepresentative v'
     -- traceShowM =<< (('b','2',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',) <$> use dependencies)
-  getRepresentative v'
+  v'' <- getRepresentative v'
+  cleanAll
+  pure v''
 
 -- | TODO :: Fix this, It's not doing sensible things
 redirectVarS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m (TermID t)
@@ -164,8 +165,11 @@ redirectVarS old new = do
     to' `dependsOn` tn'
     -- lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
-    pushUpdates tn'
-  getRepresentative n'
+    traceShowM =<< (('r',to',tn',) <$> use dependencies)
+    markDirty tn'
+  n'' <- getRepresentative n'
+  cleanAll
+  pure n''
 
   where
 
@@ -351,9 +355,10 @@ instance (BSEMC e m) => MonadRule e (IntBindT m) where
 addRuleS :: (BSMC m) => RuleIB m () -> BSM m ()
 addRuleS r = do
   rid :: RuleID <- newIdent
-  -- traceShowM =<< (('a','1',rid,) <$> use ruleHistories)
-  insertRule (newRuleMeta rid) r >>= triggerRule
-  -- traceShowM =<< (('a','2',) <$> use ruleHistories)
+  traceShowM =<< (('a','1',rid,) <$> use ruleHistories)
+  markDirty =<< (RID <$> insertRule (newRuleMeta rid) r)
+  traceShowM =<< (('a','2',) <$> use ruleHistories)
+  cleanAll
 
 instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
@@ -363,7 +368,7 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   bindVar a b = lift $ bindVar a b
 
-  lookupVar a = RLook typeRep a skip (\ m -> pure [(\ b -> pure m)])
+  lookupVar a = RLook typeRep a skip (\ m -> pure [(\ _ -> pure m)])
 
   redirectVar a b = lift $ redirectVar a b
 
@@ -573,18 +578,6 @@ setTermValue t v = do
       (terms . at @(TermMap t) t') .= (Just $ Bound (set termValue v s))
     Just _ -> panic "unreachable"
 
-pushUpdates :: forall m. (BSMC m) => ExID -> BSM m ()
-pushUpdates e = do
-  -- traceShowM ('v', showExID e)
-  case e of
-    (RID r) -> do
-      -- traceShow e
-      triggerRule r
-    _ -> pure ()
-  deps <- getDependents @m e
-  -- traceShowM ('p', e, deps)
-  traverse_ pushUpdates deps
-
 -- getTermEqualities :: forall a b e t. (Traversable t, JoinSemiLattice1 e t)
 --   => t a -> t b -> Either e [(a,b)]
 -- getTermEqualities a b = catThese . foldMap (:[]) <$> liftLatJoin a b
@@ -692,7 +685,7 @@ getPropMap t = do
 runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
-  -- traceM "Running Rule"
+  traceM $ "Running Rule" <> show rm
   (rs, ns) <- getIntBindT $ runStateT
     (execRule addToWatched (lift . lookupVar) rule) rm
   pure $ map (\ a -> (ns, a)) rs
@@ -704,23 +697,24 @@ runRule rm rule = do
 -- | History aware lookup of rules.
 insertRule :: forall m. (BSMC m) => RuleMeta -> RuleIB m () -> BSM m RuleID
 insertRule rm@(RuleMeta hist watch _) rule = do
-  lookupRuleHistory hist >>= \case
+  rid <- lookupRuleHistory hist >>= \case
     Just rid -> pure rid
     Nothing  -> do
       rid <- newIdent
-      -- traceShowM ('i', rid, hist)
-      -- let mTarget = case rule of
-      --       (RLook t v k) -> Just $ TID t (forceTID v)
-      --       _ -> Nothing
-      rules . at rid .= Just (Waiting (typeRep @(IntBindT m)) rm rule)
-      for (HS.toList watch) (\ t -> do
-        t' <- getRepExID t
-        (RID rid) `dependsOn` t')
-      hist' <- freshenHist hist
-      -- traceShowM =<< (('1',) <$> use ruleHistories)
-      ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
-      -- traceShowM =<< (('2',) <$> use ruleHistories)
+      markDirty $ RID rid
       pure rid
+  traceShowM ('i', rid, hist)
+  -- let mTarget = case rule of
+  --       (RLook t v k) -> Just $ TID t (forceTID v)
+  --       _ -> Nothing
+  rules . at rid .= Just (Waiting (typeRep @(IntBindT m)) rm rule)
+  for (HS.toList watch) $ \ t -> do
+    t' <- getRepExID t
+    (RID rid) `dependsOn` t'
+  hist' <- freshenHist hist
+  -- traceShowM =<< (('1',) <$> use ruleHistories)
+  ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
+  pure rid
 
   where
 
@@ -782,12 +776,37 @@ triggerRule rid = lookupRule rid >>= \case
   Nothing -> panic "unreachable"
   Just rs -> do
     -- traceShowM ('t', rid)
-    -- traceShowM =<< (('t','r',) <$> use ruleHistories)
+    traceShowM =<< (('t','r',rid,) <$> use ruleHistories)
     results <- uncurry runRule rs
-    traverse_ (triggerRule <=< uncurry insertRule) results
+    traceShowM ('t','1', rid)
+    traverse_ (uncurry insertRule) results
+    traceShowM ('t','2', length results)
+
 
 -- | adds a term to the watchlist and the history
 addToWatched :: forall m t. (BSMTC m t) => VarIB m t -> RTIB m ()
 addToWatched t = do
   watched %= HS.insert (toExID $ forceTID t)
   history . nextStep %= (<> [toExID $ forceTID t])
+
+markDirty :: forall m. (BSMC m) => ExID -> BSM m ()
+markDirty t = unlessM (HS.member t <$> use dirtySet) $ do
+    traceM $ "marking : " <> show t
+    traverse_ markDirty . HS.toList =<< use dirtySet
+    dirtySet %= HS.insert t
+
+cleanAll :: forall m. (BSMC m) => BSM m ()
+cleanAll = do
+  dirty <- use dirtySet
+  unless (HS.null dirty) $ do
+    traceM $ "cleaning : " <> show dirty
+    dirtySet .= mempty
+    traverse_ clean $ HS.toList dirty
+    traceM $ "foo"
+    cleanAll
+
+    where
+
+      clean :: forall m. (BSMC m) => ExID -> BSM m ()
+      clean (RID r) = triggerRule r
+      clean (TID _ _) = skip
