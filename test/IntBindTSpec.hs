@@ -1,3 +1,4 @@
+
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
@@ -13,7 +14,6 @@ Portability : POSIX
 -}
 
 module IntBindTSpec where
-
 import Intro hiding (Item)
 import Hedgehog hiding (Var, Property)
 import qualified Hedgehog as H
@@ -27,6 +27,7 @@ import Ivy.MonadClasses
 import Ivy.IntBindT
 import Ivy.ErrorClasses
 import Ivy.Testing ()
+import Internal.IntBindT
 
 newtype ConstF a f where
   ConstF :: a -> ConstF a f
@@ -195,7 +196,7 @@ prt_singleRule :: forall a e m. ( MonadProperty e (Prop (ConstF a)) m
                                , Num a)
              => Gen a -> PropertyT m ()
 prt_singleRule gen = do
-  traceM " ## Begin Test ## "
+  -- traceM " ## Begin Test ## "
   a <- ConstF <$> forAll gen
   annotateShow a
   b <- ConstF <$> forAll gen
@@ -209,11 +210,11 @@ prt_singleRule gen = do
   lift . addRule $ lookupVar va >>= \case
       Nothing -> panic "va should already be assigned"
       Just n -> do
-        traceM $ "THIS IS N :" <> show n
-        traceM $ "THIS IS N++ :" <> show (n + 1)
+        -- traceM $ "THIS IS N :" <> show n
+        -- traceM $ "THIS IS N++ :" <> show (n + 1)
         vp <- Prop @(ConstF a) `propertyOf` va
         res <- bindVar vp (n + 1)
-        traceM $ "THIS IS RES :" <> show res
+        -- traceM $ "THIS IS RES :" <> show res
         skip
   annotateShow =<< lookupVar va
   annotateShow =<< lookupVar vp
@@ -226,41 +227,8 @@ prt_singleRule gen = do
   annotateShow =<< lookupVar vp
   lookupVar va >>= (=== Just b)
   lookupVar vp >>= (=== Just (b + 1))
-  traceM " ## End Test ## "
+  -- traceM " ## End Test ## "
   skip
 
 hprop_singleRule :: H.Property
 hprop_singleRule = mkProp $ prt_singleRule @Int @Text @(BindM Text) intGen
-
--- rules
--- default rules?
--- unify
--- equals
--- subsume
-
-type BindM e = IntBindT (ExceptT e IO)
-
-defaultConf :: Config
-defaultConf = Config
-
-mkProp :: PropertyT (BindM Text) () -> H.Property
-mkProp = property . withBindM defaultConf
-
-withBindM :: forall a e. (Show e) => Config -> PropertyT (BindM e) a -> PropertyT IO a
-withBindM conf = hoist (morph2 . morph)
-
-  where
-
-    morph :: BindM e b -> ExceptT e IO b
-    morph m = do
-      supply <- liftIO newSupply
-      (a, _, _) <- runIntBindT conf supply m
-      pure a
-
-    morph2 :: ExceptT e IO b -> IO b
-    morph2 m = runExceptT m >>= \case
-      Left  e -> panic $ show e
-      Right a -> pure a
-
-intGen :: Gen Int
-intGen = Gen.int (Range.linear 0 20)

@@ -38,7 +38,7 @@ import Data.Bifoldable as P
 import Data.Bitraversable as P
 import Data.Functor.Foldable as P hiding (fold, embed, hoist)
 import Data.Functor.Foldable.TH as P
-import Data.Functor.Classes as P (liftEq)
+import Data.Functor.Classes as P (liftEq, showsPrec1)
 import Control.Monad.Trans.Control as P hiding (embed)
 import Data.Reify as P
 import Hedgehog as P (showsPrec1)
