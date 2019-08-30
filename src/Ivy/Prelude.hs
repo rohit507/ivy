@@ -24,6 +24,7 @@ module Ivy.Prelude (
   , mappendMaybes
   , force
   , errEq
+  , GetErr(..)
 ) where
 
 import Intro hiding (Item)
@@ -48,8 +49,10 @@ import GHC.TypeLits as P
 import Control.Concurrent.Supply as P
 import Control.Lens as P hiding (para, under, over, op, ala, Context)
 import Data.These as P
+import Control.Monad.Operational as P hiding (view)
+import Control.Monad.Logic as P hiding (fail)
 import Data.Constraint.Unsafe
-
+import qualified Control.Monad.Fail as B (fail,MonadFail)
 
 instance (Show a) => Show (TypeMap (OfType a)) where
   show tm = "(empty" <> mconcat (TM.toList @String (TM.map printMember tm)) <> ")"
@@ -59,8 +62,57 @@ instance (Show a) => Show (TypeMap (OfType a)) where
 
 
 
-errEq :: forall e e' m. (MonadError e m, MonadError e' m) :- (e ~ e')
+errEq :: forall e m. (MonadError e m) :- (e ~ Err m)
 errEq = unsafeCoerceConstraint
+
+class GetErr (m :: Type -> Type) where
+  type Err m :: Type
+
+instance GetErr (ExceptT e m) where
+  type Err (ExceptT e m) = e
+
+
+instance GetErr (Either e) where
+  type Err (Either e) = e
+
+instance (GetErr m) => GetErr (StateT s m) where
+  type Err (StateT s m) = Err m
+
+instance (GetErr m) => GetErr (ReaderT r m) where
+  type Err (ReaderT r m) = Err m
+
+instance (GetErr m) => GetErr (WriterT w m) where
+  type Err (WriterT w m) = Err m
+
+instance (GetErr m) => GetErr (RWST r w s m) where
+  type Err (RWST r w s m) = Err m
+
+instance (GetErr m) => GetErr (LogicT m) where
+  type Err (LogicT m) = Err m
+
+instance (GetErr m) => GetErr (ProgramT n m) where
+  type Err (ProgramT n m) = Err m
+
+instance MonadError e m => MonadError e (ProgramT n m) where
+  throwError = lift . throwError
+  catchError a h = join . lift $ (viewT a) >>= \case
+    Return a -> pure . pure $ a
+    instr :>>= f -> pure $ singleton instr >>= (\ b -> catchError (f b) h)
+
+instance (Monad m, Alternative m) => Alternative (ProgramT n m) where
+  empty = lift empty
+  a <|> b = join . lift $ (viewT a <|> viewT b) >>= \case
+    Return a -> pure . pure $ a
+    inst :>>= f -> pure $ singleton inst >>= f
+
+instance (MonadPlus m) => MonadPlus (ProgramT n m) where
+  mzero = lift mzero
+  mplus a b = join . lift $ (mplus (viewT a) (viewT b)) >>= \case
+    Return a -> pure . pure $ a
+    inst :>>= f -> pure $ singleton inst >>= f
+
+instance (B.MonadFail m) => B.MonadFail (ProgramT n m) where
+  fail s = lift $ B.fail s
 
 whenJust :: (Applicative m) => Maybe a -> (a -> m b) -> m (Maybe b)
 whenJust Nothing _ = pure Nothing

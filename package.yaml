@@ -36,6 +36,7 @@ dependencies:
   - algebraic-graphs
   - logging
   - operational
+  - logict
   - mmorph
   - prettyprinter
   - data-partition

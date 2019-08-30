@@ -35,6 +35,7 @@ import qualified GHC.Base (fmap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
 
+
 -- import Data.Partition (Partition)
 -- import qualified Data.Partition as P
 
@@ -47,7 +48,7 @@ import Control.Monad (ap)
 type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e)
-type BSMC m = (Monad m, Typeable m)
+type BSMC m = (Monad m, Typeable m, GetErr m)
 
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
 
@@ -55,7 +56,7 @@ type BSMTC m t = (BSMC m, BSTC t
                  , Newtype (Var (IntBindT m) t) Int
                  )
 
-type BSEMC e m = (MonadError e m, BSMC m, BSEC e)
+type BSEMC e m = (MonadError e m, BSMC m, BSEC e, Err m ~ e)
 
 type BSETC e t = (BSEC e, BSTC t, JoinSemiLattice1 e t)
 
@@ -267,6 +268,9 @@ data RuleState where
 
 newtype IntBindT m a = IntBindT { getIntBindT :: BSM m a }
 
+instance (GetErr m) => GetErr (IntBindT m) where
+  type Err (IntBindT m) = Err m
+
 runIntBindT :: Config -> Supply -> IntBindT m a -> m (a, BindingState, ())
 runIntBindT c s = (\ m -> runRWST m (initialContext c) (initialBindingState s)) . getIntBindT
 
@@ -339,94 +343,46 @@ toSomeVar v = SomeVar (typeRep @m) (typeRep @t) v
 newRuleMeta :: RuleID -> RuleMeta
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
-type RT = StateT RuleMeta
+
+data LookF a where
+  Lookup :: (MonadBind (Err m) m t)
+    => TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
+
+type RT m = ExceptT (Err m) (StateT RuleMeta (LogicT m))
+type RTP m = ProgramT LookF (RT m)
+
+newtype RuleT m a where
+  RuleT :: {getRuleT :: RTP m a} -> RuleT m a
+
 type RTIB m = RT (IntBindT m)
 type RuleIB m = Rule (IntBindT m)
 
--- | Rules let us describe invariants over a term map as actions that
---   can be run repeatedly/incrementally executed. In general they only
---   really hook into lookups and bind in order to correctly capture
---   dependencies where it matters.
---
---   Despite the T suffix this isn't actually (yet) a monad transformer.
---   It mostly exists to
---
---   FIXME :: This looks suspiciously like some conbination of a
---            continuation monad and a free monad. See if there's
---            someway to refactor into those.
+deriving newtype instance (Monad m) => Functor (RuleT m)
+deriving newtype instance (Monad m) => Applicative (RuleT m)
+deriving newtype instance (Monad m) => Monad (RuleT m)
+deriving newtype instance (MonadError e m, GetErr m, Err m ~ e) => MonadError e (RuleT m)
+deriving newtype instance (Monad m, Monoid (Err m)) => Alternative (RuleT m)
+deriving newtype instance (Monad m, Monoid (Err m)) => MonadPlus (RuleT m)
+deriving newtype instance (Monad m) => MonadFail (RuleT m)
 
-data RuleT m a where
-
-  RLook :: (MonadBind e m t, Eq1 t, BSMTC m t)
-    => { _type :: TypeRep t
-       , _var :: Var m t
-       , _pre :: RT m b
-       , _post :: Maybe (t (Var m t)) -> RT m [(Maybe (t (Var m t)), b) -> RuleT m a]
-       } -> RuleT m a
-
-  RStep :: ()
-    => { _pre :: RT m b
-       , _progress :: RT m [b -> RuleT m a]
-       } -> RuleT m a
-
-  RExec :: ()
-    => { _action :: RT m a
-       } -> RuleT m a
-
-execRule :: (Monad m)
-  => (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
-         => Var m t -> RT m ())
-  -> (forall e t. (MonadBind e m t, Eq1 t, BSMTC m t)
-         => Var m t -> RT m (Maybe (t (Var m t))))
-  -> RuleT m a
-  -> RT m [RuleT m a]
-
-execRule annotate lookup (RLook _ v a o) = do
-  traceM $ "Exec Look : " <> show v
-  annotate v
-  term <- lookup v
-  pure . pure $ RStep ((,) <$> lookup v <*> a) (o term)
-
-execRule annotate lookup (RStep a o) = do
-  traceM $ "Exec Step "
-  fs <- map (\ f -> RExec a >>= f) <$> o
-  mconcat <$> traverse (execRule annotate lookup) fs
-
-execRule _ _ (RExec a) = do
-  traceM $ "Exec"
-  a *> pure []
-
-instance Functor m => Functor (RuleT m) where
-  fmap f (RLook t v a o) = RLook t v a (\ t -> map (map f .) <$> o t)
-  fmap f (RStep a o) = RStep a (map (map f .) <$> o)
-  fmap f (RExec a) = RExec $ map f a
-
-instance (Monad m) => Applicative (RuleT m) where
-  pure = RExec . pure
-
-  (<*>) :: RuleT m (a -> b) -> RuleT m a -> RuleT m b
-  (<*>) = ap
-
-instance (Monad m) => Monad (RuleT m) where
-  (RLook t v a o) >>= k = RLook t v a (map (map (map (>>= k))) <$> o)
-  (RStep a o) >>= k = RStep a (map (map (>>= k)) <$> o)
-  (RExec a) >>= k = RStep a (pure [k])
-
--- | FIXME :: `catchError` does nothing in the current instance, since
---            it requires us to be able to unify the inner and outer error type.
-instance (MonadError e m) => MonadError e (RuleT m) where
-  throwError = lift . throwError
-
-  catchError m _ = m
+instance (GetErr m) => GetErr (RuleT m) where
+  type Err (RuleT m) = Err m
 
 instance MonadTrans RuleT where
-  lift = RExec . lift
+  lift = RuleT . lift . lift . lift . lift
 
-rtLift :: (Monad m, Applicative (RuleT m)) => RT m a -> RuleT m a
-rtLift = RExec
+execRule :: forall m a. (Monad m, Typeable m)
+         => (forall t. (MonadBind (Err m) m t) => Var m t -> RT m ())
+         -> (forall t. (MonadBind (Err m) m t) => Var m t -> RT m (Maybe (t (Var m t))))
+         -> RuleT m a -> RT m (Either a (RuleT m a))
+execRule note lookup act = (viewT . getRuleT $ act) >>= \case
+  Return a -> pure $ Left a
+  (Lookup tm __ v) :>>= f -> fromMaybe (panic "unreachable") $ do
+      HRefl <- eqTypeRep tm (typeRep @m)
+      pure $ do
+        note v
+        pure . Right . RuleT $ (lift $ lookup v) >>= f
 
-rtDrop :: (Monad m, Applicative (RuleT m)) => RuleT m a -> RT m [RuleT m a]
-rtDrop = pure . pure
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config

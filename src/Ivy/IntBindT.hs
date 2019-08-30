@@ -360,7 +360,7 @@ addRuleS r = do
   traceShowM =<< (('a','2',) <$> use ruleHistories)
   cleanAll
 
-instance (MonadBind e m t) => MonadBind e (RuleT m) t where
+instance (MonadBind e m t, GetErr m, Err m ~ e) => MonadBind e (RuleT m) t where
 
   type Var (RuleT m) = Var m
 
@@ -368,13 +368,15 @@ instance (MonadBind e m t) => MonadBind e (RuleT m) t where
 
   bindVar a b = lift $ bindVar a b
 
-  lookupVar a = RLook typeRep a skip (\ m -> pure [(\ _ -> pure m)])
+  lookupVar a = RuleT . singleton $ Lookup (typeRep @m) typeRep a
 
   redirectVar a b = lift $ redirectVar a b
 
   freshenVar = lift . freshenVar
 
 instance ( MonadRule e m
+         , GetErr m
+         , Err m ~ e
          , Rule m ~ RuleT m
          , MonadAssume e m t
          , Typeable m
@@ -382,26 +384,26 @@ instance ( MonadRule e m
 
   assumeEqual :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeEqual a b m = do
-    old <- RExec $ use @RuleMeta assumptions
-    RExec $ assumptions %= addEqAssertion (toSomeVar @m a) (toSomeVar @m b)
+    old <- RuleT $ use @RuleMeta assumptions
+    RuleT $ assumptions %= addEqAssertion (toSomeVar @m a) (toSomeVar @m b)
     a <- m
-    RExec $ assumptions .= old
+    RuleT $ assumptions .= old
     pure a
 
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeUnified a b m = do
-    old <- RExec $ use @RuleMeta assumptions
-    RExec $ assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
+    old <- RuleT $ use @RuleMeta assumptions
+    RuleT $ assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
     a <- m
-    RExec $ assumptions .= old
+    RuleT $ assumptions .= old
     pure a
 
   assumeSubsumed :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeSubsumed a b m = do
-    old <- RExec $ use @RuleMeta assumptions
-    RExec $ assumptions %= addSubAssertion (toSomeVar @m a) (toSomeVar @m b)
+    old <- RuleT $ use @RuleMeta assumptions
+    RuleT $ assumptions %= addSubAssertion (toSomeVar @m a) (toSomeVar @m b)
     a <- m
-    RExec $ assumptions .= old
+    RuleT $ assumptions .= old
     pure a
 
   assertEqual :: Var m t -> Var m t -> RuleT m ()
@@ -415,7 +417,7 @@ instance ( MonadRule e m
 
   isAssumedEqual :: Var m t -> Var m t -> RuleT m Bool
   isAssumedEqual a b = do
-    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    assumed :: Assertions SomeVar <- RuleT $ use assumptions
     let a' = getRep (toSomeVar @m a) assumed
         b' = getRep (toSomeVar @m b) assumed
     pure (isAssertedEqual a' b' assumed)
@@ -423,7 +425,7 @@ instance ( MonadRule e m
 
   isAssumedUnified :: Var m t -> Var m t -> RuleT m Bool
   isAssumedUnified a b = do
-    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    assumed :: Assertions SomeVar <- RuleT $ use assumptions
     let a' = getRep (toSomeVar @m a) assumed
         b' = getRep (toSomeVar @m b) assumed
     pure (isAssertedUnified a' b' assumed)
@@ -432,7 +434,7 @@ instance ( MonadRule e m
   -- | It is unclear is this is
   isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
   isAssumedSubsumed a b = do
-    assumed :: Assertions SomeVar <- RExec $ use assumptions
+    assumed :: Assertions SomeVar <- RuleT $ use assumptions
     let a' = getRep (toSomeVar @m a) assumed
         b' = getRep (toSomeVar @m b) assumed
     pure (isAssertedSubsumed a' b' assumed)
@@ -450,6 +452,8 @@ liftAssumed f (SomeVar tm tt v) (SomeVar tm' tt' v')
 
 
 instance ( MonadRule e m
+         , GetErr m
+         , Err m ~ e
          , forall t. (MonadBind e (Rule m) t) => MonadBind e m t
          , Rule m ~ RuleT m
          , MonadProperty e p m
@@ -483,9 +487,6 @@ instance (MonadProperties e m
         (\ a b -> pure $ a <> b)
         [] a b
     foldrM append empty =<< sequenceA r
-
-instance (Monad m) => MonadFail (RuleT m) where
-  fail _ = RStep skip (pure [])
 
 instance (MonadRule e m) => MonadRule e (RuleT m) where
   type Rule (RuleT m) = RuleT m
