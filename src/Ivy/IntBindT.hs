@@ -683,13 +683,23 @@ getPropMap t = do
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule.
-runRule :: forall m. (BSMC m)
+runRule :: forall m. (BSMC m, Show (Err m))
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
   traceM $ "Running Rule" <> show rm
-  (rs, ns) <- getIntBindT $ runStateT
-    (execRule addToWatched (lift . lookupVar) rule) rm
-  pure $ map (\ a -> (ns, a)) rs
+  catMaybes . map parseResults <$> (getIntBindT . observeAllT . flip runStateT rm . runExceptT $ exec rule)
+
+  where
+
+    exec :: RuleIB m () -> RTIB m (Either () (RuleIB m ()))
+    exec = execRule addToWatched (lift . lift . lift . lookupVar)
+
+    parseResults :: (Either (Err m) (Either () (RuleT (IntBindT m) ())), RuleMeta)
+                 -> Maybe (RuleMeta, RuleIB m ())
+    parseResults (Left e,_) = trace ("Rule Threw Error : " <> show e) $ Nothing
+    parseResults (Right (Left ()), _) = Nothing
+    parseResults (Right (Right r), rm) = Just (rm, r)
+
 
 -- TODO :: Okay, the issue is that we are not properly preserving the full,
 --        executable monad on lookup or anything, eval rule in particular ends
@@ -700,10 +710,7 @@ insertRule :: forall m. (BSMC m) => RuleMeta -> RuleIB m () -> BSM m RuleID
 insertRule rm@(RuleMeta hist watch _) rule = do
   rid <- lookupRuleHistory hist >>= \case
     Just rid -> pure rid
-    Nothing  -> do
-      rid <- newIdent
-      markDirty $ RID rid
-      pure rid
+    Nothing  -> newIdent
   traceShowM ('i', rid, hist)
   -- let mTarget = case rule of
   --       (RLook t v k) -> Just $ TID t (forceTID v)
@@ -715,6 +722,8 @@ insertRule rm@(RuleMeta hist watch _) rule = do
   hist' <- freshenHist hist
   -- traceShowM =<< (('1',) <$> use ruleHistories)
   ruleHistories %= HM.unionWith mergeRuleHistories (makeRuleHists rid hist')
+  markDirty (RID rid)
+  cleanAll
   pure rid
 
   where
@@ -793,7 +802,7 @@ addToWatched t = do
 markDirty :: forall m. (BSMC m) => ExID -> BSM m ()
 markDirty t = unlessM (HS.member t <$> use dirtySet) $ do
     traceM $ "marking : " <> show t
-    traverse_ markDirty . HS.toList =<< use dirtySet
+    traverse_ markDirty . HS.toList =<< getDependents t
     dirtySet %= HS.insert t
 
 cleanAll :: forall m. (BSMC m) => BSM m ()
@@ -810,4 +819,4 @@ cleanAll = do
 
       clean :: forall m. (BSMC m) => ExID -> BSM m ()
       clean (RID r) = triggerRule r
-      clean (TID _ _) = skip
+      clean e@(TID _ _) = traceShowM =<< ('c',e,,) <$> getDependents e <*> getDependencies e

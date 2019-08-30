@@ -47,8 +47,8 @@ import Control.Monad (ap)
 
 type BSM = RWST Context () BindingState
 
-type BSEC e = (Typeable e)
-type BSMC m = (Monad m, Typeable m, GetErr m)
+type BSEC e = (Typeable e, Show e)
+type BSMC m = (Monad m, Typeable m, GetErr m, Show (Err m))
 
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
 
