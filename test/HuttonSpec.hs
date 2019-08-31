@@ -74,7 +74,7 @@ instance Eq a => Eq1 (HuttonF a) where
   liftEq _ (HVal a) (HVal b) = a == b
   liftEq _ _ _ = False
 
-instance (Num a, Show a) => JoinSemiLattice1 e (HuttonF a) where
+instance (Num a, Show a, NonUnifiableErr e a) => JoinSemiLattice1 e (HuttonF a) where
   liftLatJoin (a :+ b) (a' :+ b') = Right $ (These a a') :+ (These b b')
   liftLatJoin (HVal a) (HVal b) = Right $ HVal (a + b)
   liftLatJoin a b = Left $ termsNotUnifiable a b

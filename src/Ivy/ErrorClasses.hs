@@ -33,14 +33,14 @@ instance (Show a) => EqualityErr Void a where
   valuesNotEqual a b = panic $ valuesNotEqual a b
 
 class NonUnifiableErr e a where
-  termsNotUnifiable :: a -> b -> e
+  termsNotUnifiable :: a -> a -> e
 
-throwTermsNotUnifiable :: forall c e t a b d m.
-  (NonUnifiableErr e a , MonadError e m) => a -> a -> m d
-throwTermsNotUnifiable a b = throwError $ termsNotUnifiable @e @t a b
+throwTermsNotUnifiable :: forall e a m b.
+  (NonUnifiableErr e a, MonadError e m) => a -> a -> m b
+throwTermsNotUnifiable a b = throwError $ termsNotUnifiable @e a b
 
-instance (Show (t a), Show (t b)) =>  NonUnifiableErr Text t a b where
+instance (Show a) => NonUnifiableErr Text a where
   termsNotUnifiable a b = "Terms `" <> show a <> "`, `" <> show b <> "` cannot be unified."
 
-instance (Show (t a), Show (t b)) => NonUnifiableErr Void t a b where
-  termsNotUnifiable a b = panic $ termsNotUnifiable @Text @t a b
+instance (Show a) => NonUnifiableErr Void a where
+  termsNotUnifiable a b = panic $ termsNotUnifiable @Text a b
