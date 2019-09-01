@@ -43,15 +43,17 @@ instance (Ord a, Hashable a) => Semigroup (Assertions a) where
     }
 
 instance (Ord a, Hashable a) => Monoid (Assertions a) where
- mempty = Assertions P.empty P.empty mempty
+ mempty = -- trace "init assert" $
+   Assertions P.empty P.empty mempty
 
 getRep :: (Ord i) => i -> Assertions i -> i
 getRep i a = P.rep (a ^. unifications) i
-{-# INLINE getRep #-}
+-- {-# INLINE getRep #-}
 
 getRepL :: (Ord i) => i -> [Assertions i] -> i
 getRepL i [] = i
-getRepL i (l:ls) = getRepL (getRep i l) ls
+getRepL i (l:ls) = --  trace "getRepL :" $
+  getRepL (getRep i l) ls
 
 
 addEqAssertion :: (Ord i) => i -> i -> Assertions i -> Assertions i
@@ -61,7 +63,8 @@ addSubAssertion :: (Ord i, Hashable i) => i -> i -> Assertions i -> Assertions i
 addSubAssertion a b = subsumptions %~ HM.insertWith (<>) a (HS.singleton b)
 
 addUniAssertion :: (Ord i, Hashable i) => i -> i -> Assertions i -> Assertions i
-addUniAssertion a b = updateSub a b . addEqAssertion a b . (unifications %~ P.joinElems a b)
+addUniAssertion a b =
+  updateSub a b . addEqAssertion a b . (unifications %~ P.joinElems a b)
 
 updateSubs :: (Ord i, Hashable i) => Assertions i -> Assertions i
 updateSubs a@Assertions{..} = a{
@@ -73,7 +76,7 @@ updateSubs a@Assertions{..} = a{
 
 updateSub :: (Ord i, Hashable i) => i -> i -> Assertions i -> Assertions i
 updateSub i j a = if isAssertedSubsumed j i a
-  then addUniAssertion i j a
+  then (if isAssertedUnified i j a then a else addUniAssertion i j a)
   else (subsumptions %~
      ( HM.adjust (HS.map (\ n -> if n == i then j else n)) i
      . HM.delete j
@@ -104,7 +107,8 @@ isAssertedUnified i j a
 
 isAssertedUnifiedL :: (Ord i) => i -> i -> [Assertions i] -> Bool
 isAssertedUnifiedL _ _ [] = False
-isAssertedUnifiedL i j (l:ls) = isAssertedUnified i j l || isAssertedUnifiedL i' j' ls
+isAssertedUnifiedL i j (l:ls) = -- trace "au" $
+  isAssertedUnified i j l || isAssertedUnifiedL i' j' ls
   where
     i' = getRep i l
     j' = getRep j l

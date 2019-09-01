@@ -43,17 +43,19 @@ dependencies:
 
 library:
   source-dirs: src
-  exposed-modules:
-    - Ivy.Prelude
-    - Ivy.MonadClasses
-    - Ivy.IntBindT
+  # exposed-modules:
+  #  - Ivy.Prelude
+  #  - Ivy.MonadClasses
+  #  - Ivy.IntBindT
 
 tests:
   tasty:
     main: TastyDriver.hs
     source-dirs:
       - test
-      - src
+      # - src
+    dependencies:
+      - ivy
 
 default-extensions:
   NoImplicitPrelude

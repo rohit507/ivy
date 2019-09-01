@@ -70,16 +70,16 @@ instance (MonadProperties e m
       -> a
       -> Var m t -> Var m t -> PropertyT m a
   getPropertyPairs f append empty a b = do
-    traceM "start getting pairs"
+    -- traceM "start getting pairs"
     r <- lift $ getPropertyPairs @e
         (\ p t -> do
-            traceM "PropPair 1"
+            -- traceM "PropPair 1"
             pure . pure $ f p t)
         (\ a b -> do
-            traceM "propPair 2"
+            -- traceM "propPair 2"
             pure $ a <> b)
         [] a b
-    traceM "end getting pairs"
+    -- traceM "end getting pairs"
     foldrM @[] append empty =<< sequenceA r
 
 

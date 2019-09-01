@@ -96,7 +96,9 @@ instance (BSEMTC e m r)
   redirectVar a b = IntBindT $ force <$> redirectVarS @e @m @r (force a) (force b)
 
   freshenVar :: VarIB m r -> IntBindT m (VarIB m r)
-  freshenVar a = IntBindT $ force <$> getRepresentative (force @(TermID r) a)
+  freshenVar a = IntBindT $ do
+    -- traceM $ "freshening : " <> show a
+    force <$> getRepresentative (force @(TermID r) a)
 
 freeVarS :: forall m t. (BSMTC m t) =>  BSM m (TermID t)
 freeVarS = do
@@ -228,6 +230,7 @@ getPropertyPairsS :: forall a e m t. (BSEMC e m, BSTC t)
     -> a
     -> TermID t -> TermID t -> BSM m a
 getPropertyPairsS f mappend mempty a b = do
+  -- traceM $ "getting Pairs for : " <> show a <> show b
   pma <- getPropMap a
   pmb <- getPropMap b
   let theseMap :: TypeMap (OfType ())
@@ -315,22 +318,29 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
 
   isAssumedEqual :: VarIB m t -> VarIB m t -> IntBindT m Bool
   isAssumedEqual a b = IntBindT $ do
+    -- traceM $ "assume eq : " <> show a <> show b
     assert <- use assertions
+    -- traceM $ "assert"
     assume <- view assumptions
+    -- traceM $ "assumed : " <> show assume
     pure $ isAssertedEqualL
              (toSomeVar @(IntBindT m) a)
              (toSomeVar @(IntBindT m) b) [assume, assert]
 
   isAssumedUnified  :: VarIB m t -> VarIB m t -> IntBindT m Bool
   isAssumedUnified a b = IntBindT $ do
+    -- traceM $ "assume uni : " <> show a <> show b
     assert <- use assertions
+    -- traceM $ "asserted : " <> show assert
     assume <- view assumptions
+    -- traceM $ "assumed : " <> show assume
     pure $ isAssertedUnifiedL
              (toSomeVar @(IntBindT m) a)
              (toSomeVar @(IntBindT m) b) [assume, assert]
 
   isAssumedSubsumed :: VarIB m t -> VarIB m t -> IntBindT m Bool
   isAssumedSubsumed a b = IntBindT $ do
+    -- traceM $ "assume sub : " <> show a <> show b
     assert <- use assertions
     assume <- view assumptions
     pure $ isAssertedSubsumedL
@@ -341,7 +351,8 @@ assumeEqualS :: forall a m t. (BSMTC m t) => SomeVar -> SomeVar -> BSM m a -> BS
 assumeEqualS a b m = local (assumptions %~ addEqAssertion a b) m
 
 assumeUnifiedS :: forall a m t. (BSMTC m t) => SomeVar -> SomeVar  -> BSM m a -> BSM m a
-assumeUnifiedS a b m = local (assumptions %~ addUniAssertion a b) m
+assumeUnifiedS a b m = -- trace "assUs" $
+  local (assumptions %~ addUniAssertion a b) m
 
 assumeSubsumedS :: forall a m t. (BSMTC m t) => SomeVar -> SomeVar -> BSM m a -> BSM m a
 assumeSubsumedS a b m = local (assumptions %~ addSubAssertion a b) m
@@ -393,8 +404,11 @@ instance ( MonadRule e m
   assumeUnified :: Var m t -> Var m t -> RuleT m a -> RuleT m a
   assumeUnified a b m = do
     old <- RuleT $ use @RuleMeta assumptions
+    -- traceM $ "add addumed to : " <> show (a, b, old)
     RuleT $ assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
     a <- m
+    n <- RuleT $ use @RuleMeta assumptions
+    -- traceM $ "popAssumedFrom : " <> show n
     RuleT $ assumptions .= old
     pure a
 
@@ -425,6 +439,7 @@ instance ( MonadRule e m
 
   isAssumedUnified :: Var m t -> Var m t -> RuleT m Bool
   isAssumedUnified a b = do
+    -- traceM $ "isAssumed UNi : " <> show a <> show b
     assumed :: Assertions SomeVar <- RuleT $ use assumptions
     let a' = getRep (toSomeVar @m a) assumed
         b' = getRep (toSomeVar @m b) assumed
@@ -550,13 +565,16 @@ getAllTerms = (TM.lookup (typeRep @(Term t)) . getTermMap . (getTMap :: TMap -> 
   Just hm -> pure $ HM.keys hm
 
 getRepresentative :: forall m t. (BSMTC m t) => TermID t -> BSM m (TermID t)
-getRepresentative t = use (terms . at @(TermMap t) t) >>= \case
-  Nothing -> panic "should be impossible to generate uninstanciated termID"
-  Just (Forwarded t') -> do
-    rep <- getRepresentative t'
-    (terms . at @(TermMap t) t) .= Just (Forwarded rep)
-    pure rep
-  Just _ -> pure t
+getRepresentative t = do
+  -- traceM $ "Getting rep for : " <> show t
+  use (terms . at @(TermMap t) t) >>= \case
+    Nothing -> panic "should be impossible to generate uninstanciated termID"
+    Just (Forwarded t') -> do
+      rep <- getRepresentative t'
+      -- traceM $ "repIs : " <> show rep
+      when (t /= rep) $ (terms . at @(TermMap t) t) .= Just (Forwarded rep)
+      pure rep
+    Just _ -> pure t
 
 getDependents :: forall m. (BSMC m) => ExID -> BSM m (HashSet ExID)
 getDependents a = HS.fromList . S.toList . G.postSet a <$> use dependencies
@@ -696,7 +714,8 @@ runRule rm rule = do
 
     parseResults :: (Either (Err m) (Either () (RuleT (IntBindT m) ())), RuleMeta)
                  -> Maybe (RuleMeta, RuleIB m ())
-    parseResults (Left e,_) = trace ("Rule Threw Error : " <> show e) $ Nothing
+    parseResults (Left e,_) = trace ("Rule Threw Error : " <> show e) $
+      Nothing
     parseResults (Right (Left ()), _) = Nothing
     parseResults (Right (Right r), rm) = Just (rm, r)
 

@@ -179,91 +179,49 @@ class ( forall g. (MonadBind     e m g) => MonadBind e (Rule m) g
   default addRule :: (Rule m ~ m) => Rule m () -> m ()
   addRule = id
 
-data BinOpContext a b c e m t = BinOpContext
-  { check :: c -> These (Var m t) (Var m t) -> m (Maybe a)
-  , update :: c -> These (Var m t) (Var m t) -> m c
-  , assume :: These (Var m t) (Var m t) -> m (Maybe b) -> m (Maybe b)
-  , handle :: e -> m b
-  , traversing :: forall d. (d -> m a) -> t (m d) -> m b
-  , merge :: These (Var m t) (Var m t) -> Maybe b -> m a
-  }
+type These2 a = These a a
 
--- type MonadUnify e m t
---   = ( MonadRule e m
---     , MonadBind e m t
---     , MonadAssume e m t
---     , MonadProperties e m
---     , Newtype (Var m t) Int
---     , Var m ~ Var (Rule m)
---     )
+data BinOpFuncs a b v e m t = BinOpFuncs
+ { check :: These2 v -> m (Maybe a) -- ^ Do we need to recurse?
+ , assume :: forall c. These2 v -> m c -> m c -- ^ modify all recursive steps
+ , lookup :: v -> m (Maybe (t v)) -- ^ lookup term
+ , handle :: e -> m b -- ^ Handle errors
+ , merge  :: These2 v -> Maybe b -> m a -- ^ Merge terms given result of op
+ , traversing :: forall d. (d -> m a) -> t d -> m b -- ^ custom traverse (w/ possible short-circuiting)
+ }
 
-recBinOpF :: forall a b c e m t. (Show a, MonadBind e m t, JoinSemiLattice1 e t)
-         => BinOpContext a b c e m t
-         -> (c -> These (Var m t) (Var m t) -> m a)
-         -> c
-         -> These (Var m t) (Var m t)
+recBinOp :: forall a b v e m t. (Show a, Show v, Monad m, Functor t, JoinSemiLattice1 e t)
+         => BinOpFuncs a b v e m t
+         -> These v v
          -> m a
-recBinOpF BinOpContext{..} = trace "getF" $ \ recurse ctxt inputs -> do
-  traceM "start recBinOpF"
-  checked <- check ctxt inputs
-  traceShowM ('r','c', checked)
-  flip maybeM (pure checked) $ do
-    ctxt' <- update ctxt inputs
-    traceM "subops"
-    subterm :: Maybe b <- assume inputs $ do
-        traceM "subterm"
-        (crushThese <$> bitraverse (lookupVar @e) (lookupVar @e) inputs) >>= \case
-          Nothing   -> nothingCase
-          Just (This ta) -> thisCase (trace "sthis" $ recurse ctxt') ta
-          Just (That tb) -> thatCase (trace "sthat" $ recurse ctxt') tb
-          Just (These ta tb) -> theseCase (trace "sthese" $ recurse $ trace "ctxt" ctxt') ta tb
-    traceM "merge"
-    merge inputs subterm
-
-  where
-
-
-    nothingCase = pure Nothing
-
-    thisCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
-    thisCase f ta = do
-      traceM "recF this"
-      Just <$> (traversing f $ map (pure . This) ta)
-
-
-    thatCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> m (Maybe b)
-    thatCase f tb = do
-      traceM "recF that"
-      Just <$> (traversing f $ map (pure . That) tb)
-
-    theseCase :: (These (Var m t) (Var m t) -> m a) -> t (Var m t) -> t (Var m t) -> m (Maybe b)
-    theseCase f ta tb = do
-      traceM "recF these"
-      Just <$> case liftLatJoin ta tb of
-        Left e -> handle e
-        Right tu -> do
-          traceM "traversing these"
-          traversing (\ a -> traceM "callF" >> f a) (map pure tu)
-
-recBinOp :: forall a b c e m t. (Show a, MonadBind e m t, JoinSemiLattice1 e t)
-         => BinOpContext a b c e m t
-         -> c
-         -> These (Var m t) (Var m t)
-         -> m a
-recBinOp c = trace "fix" $ fix (trace "rec" $ recBinOpF c)
-
-type OpSet m = HashSet (TVar m, TVar m)
-
-data TVar m where
-  TVar :: (MonadBind e m t) => TypeRep t -> Var m t -> TVar m
-
-instance Hashable (TVar m) where
-  hashWithSalt s (TVar _ v) = hashWithSalt s v
-
-instance Eq (TVar m) where
-  (TVar t v) == (TVar t' v') = fromMaybe False $ do
-    HRefl <- eqTypeRep t t'
-    pure (v == v')
+recBinOp BinOpFuncs{..} = fix $ \ recurse inputs -> do
+  -- traceM $ "recBinOp : " <> show inputs
+  r <- check inputs
+  -- traceM $ "checkResult : " <> show r
+  case r of
+    Just a -> do
+      -- traceM $ "no rec : " <> show a
+      pure a
+    Nothing -> do
+      -- traceM $ "rec : " <> show inputs
+      subterm :: Maybe b <- assume inputs $ do
+        (crushThese <$> bitraverse lookup lookup inputs) >>= \case
+          Nothing -> pure Nothing
+          Just (This ta) -> do
+            -- traceM $ "this :" <> show inputs
+            Just <$> traversing recurse (This <$> ta)
+          Just (That tb) -> do
+            -- traceM $ "that :" <> show inputs
+            Just <$> traversing recurse (That <$> tb)
+          Just (These ta tb) -> do
+            -- traceM $ "these : " <> show inputs
+            Just <$> case liftLatJoin ta tb of
+              Left e -> handle e
+              Right tu -> traversing recurse tu
+      -- traceM "pre-merge"
+      res <- merge inputs subterm
+      -- traceM "post-merge"
+      pure res
 
 -- | Returns nothing if the terms aren't equal, otherwise it returns a list
 --   of terms that should be unified to unify the input terms.
@@ -272,27 +230,34 @@ equals :: forall e m t. (MonadAssume e m t
                        , JoinSemiLattice1 e t
                        )
    => Var m t -> Var m t -> m Bool
-equals a b = recBinOp context () (These a b)
+equals a b = recBinOp fns (These a b)
 
   where
 
-    context :: BinOpContext Bool Bool () e m t
-    context = BinOpContext{..}
+    fns :: BinOpFuncs Bool Bool (Var m t) e m t
+    fns = BinOpFuncs{..}
 
-    update _ _ = pure ()
+    lookup = lookupVar
 
-    traversing :: forall c. (c -> m Bool) -> t (m c) -> m Bool
-    traversing f t = allM (>>= f) $ (foldMap (:[]) t :: [m c])
+    traversing :: forall c. (c -> m Bool) -> t c -> m Bool
+    traversing f t = allM f $ foldToList t
 
-    check _ (These a b) = ifM (a `isAssumedEqual` b)
-      (pure . Just $ True) (pure Nothing)
-    check _ _ = pure . Just $ True
+    check :: These2 (Var m t) -> m (Maybe Bool)
+    check (These a b) = do
+      -- traceM $ "checking : " <> show a <> show b
+      ifM (a `isAssumedEqual` b) (pure $ Just True) (pure $ Nothing)
+    check v = do
+      -- traceM $ "no check : " <>  show v
+      pure $ Just True
 
+    assume :: forall c. These2 (Var m t) -> m c -> m c
     assume (These a b) = assumeEqual a b
     assume _ = id
 
+    handle :: e -> m Bool
     handle _ = pure $ False
 
+    merge :: These2 (Var m t) -> Maybe Bool -> m Bool
     merge (This _) eq = pure $ fromMaybe True eq
     merge (That _) eq = pure $ fromMaybe True eq
     merge (These a b) eq = (pure $ fromMaybe True eq) &&^ equalsProps a b
@@ -313,37 +278,37 @@ unify :: forall e m t. ( MonadAssume e m t
                       )
    => Var m t -> Var m t -> m (Var m t)
 unify a b = do
-  recBinOp context () (These a b)
+  recBinOp fns (These a b)
 
    where
 
-    context :: BinOpContext (Var m t) (t (Var m t)) () e m t
-    context = BinOpContext{..}
+    fns :: BinOpFuncs (Var m t) (t (Var m t)) (Var m t) e m t
+    fns = BinOpFuncs{..}
 
-    check _ (This a) = do
-      traceM $ "Check This."
+    lookup = lookupVar
+
+    check :: These2 (Var m t) -> m (Maybe (Var m t))
+    check (This a) = do
+      -- traceM $ "uni Check This."
       pure $ Just a
-    check _ (That b) = do
-      traceM $ "Check That."
+    check (That b) = do
+      -- traceM $ "uni Check That."
       pure $ Just b
-    check _ (These a b) = do
-      traceM $ "Check These."
-      r <- ifM (a `isAssumedUnified` b) (pure . Just $ b) (pure Nothing)
-      traceShowM ('c',a,b,r)
-      pure r
-
-    update _ _ = pure ()
-
-    assume (These a b) = do
-      res <- assumeUnified a b
-      traceShowM ('a')
+    check (These a b) = do
+      -- traceM $ "uni Check These."
+      res <- ifM (a `isAssumedUnified` b) (pure . Just $ b) (pure Nothing)
+      -- traceM $ "uni Check result : " <> show res
       pure res
+
+    assume :: forall c. These2 (Var m t) -> m c -> m c
+    assume (These a b) = assumeUnified @e @m a b
     assume _ = id
 
+    handle :: e -> m b
     handle = throwError
 
-    traversing :: forall c. (c -> m (Var m t)) -> t (m c) -> m (t (Var m t))
-    traversing f t = sequenceA $ map (\ a -> trace "rec"$ a >>= f) t
+    traversing :: forall c. (c -> m (Var m t)) -> t c -> m (t (Var m t))
+    traversing = traverse
 
     merge (These a b) mTerm = do
       unifyProps a b
@@ -362,13 +327,13 @@ unify a b = do
                                     , Property p)
                  => proxy p -> These (Var m (To p)) (Var m (To p)) -> m ()
         unifyProp _ (These a' b') = do
-          traceM $ "UnifyProp these"
+          -- traceM $ "UnifyProp these"
           unify @e @m @(To p) a' b' *> skip
         unifyProp _ (This a') = do
-          traceM "UnifyProp this"
+          -- traceM "UnifyProp this"
           (unify a' =<< ((rep :: p) `propertyOf` b)) *> skip
         unifyProp _ _ = do
-          traceM "unifyProp that"
+          -- traceM "unifyProp that"
           skip
 
 -- | Subsumes the first term to the second, returns the second.
@@ -387,21 +352,21 @@ subsume a b = (addRule $ performSubsume a b *> skip) *> pure b
   where
 
     -- performSubsume :: Var m t -> Var m t -> Rule m (Var m t)
-    performSubsume a b = recBinOp context mempty (These a b)
+    performSubsume a b = recBinOp fns (These a b)
 
-    context :: BinOpContext (Var m t) (t (Var m t)) () e (Rule m) t
-    context = BinOpContext{..}
+    fns :: BinOpFuncs (Var m t) (t (Var m t)) (Var m t) e (Rule m) t
+    fns = BinOpFuncs{..}
 
-    update _ _ = pure ()
+    lookup = lookupVar
 
     -- check :: These (Var m t) (Var m t) -> Rule m (Maybe (Var m t))
-    check _ (This a) = Just <$> (subsume a =<< freeVar)
-    check _ (That b) = pure $ Just b
+    check (This a) = Just <$> (performSubsume a =<< freeVar)
+    check (That b) = pure $ Just b
     -- Even if a does already subsume b we still need to run the recursive
     -- pass of the rule, since it will update the subsumed term anyway
     -- The only other case occours when two terms subsume each other and
     -- need to be unified.
-    check _ (These a b) = ifM (b `isAssumedSubsumed` a)
+    check (These a b) = ifM (b `isAssumedSubsumed` a)
                             (Just <$> unify a b)
                             (pure Nothing)
 
@@ -412,7 +377,7 @@ subsume a b = (addRule $ performSubsume a b *> skip) *> pure b
     -- handle ::e -> Rule m c
     handle = throwError
 
-    traversing f t = sequenceA $ map (>>= f) t
+    traversing = traverse
 
     merge :: These (Var m t) (Var m t) -> Maybe (t (Var m t)) -> Rule m (Var m t)
     merge (These a b) mTerm =

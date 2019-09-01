@@ -26,6 +26,7 @@ module Ivy.Prelude (
   , errEq
   , GetErr(..)
   , crushThese
+  , foldToList
 ) where
 
 import Intro hiding (Item)
@@ -54,6 +55,9 @@ import Control.Monad.Operational as P hiding (view)
 import Control.Monad.Logic as P hiding (fail)
 import Data.Constraint.Unsafe
 import qualified Control.Monad.Fail as B (fail,MonadFail)
+
+foldToList :: (Foldable f) => f a -> [a]
+foldToList = foldr (:) []
 
 crushThese :: These (Maybe a) (Maybe b) -> Maybe (These a b)
 crushThese = \case

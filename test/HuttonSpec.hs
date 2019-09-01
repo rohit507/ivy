@@ -135,7 +135,7 @@ prt_unifyHutton :: forall a e m. (Ord a
                              ,MonadAssume e m (HuttonF a))
            => Gen a -> PropertyT m ()
 prt_unifyHutton gen = do
-  traceM "## Begin Test ##"
+  -- traceM "## Begin Test ##"
   a <- HVal <$> forAll gen
   b <- HVal <$> forAll gen
   va <- newVar a
@@ -146,19 +146,19 @@ prt_unifyHutton gen = do
   vbp <- newVar (vd :+ vb)
   lookupVar vap >>= (=== Just (va :+ vc))
   lookupVar vbp >>= (=== Just (vd :+ vb))
-  traceM "pre-unify"
+  -- traceM "pre-unify"
   vu <- unify vap vbp
-  traceM "post-unify"
+  -- traceM "post-unify"
   lookupVar vu >>= \case
     Nothing -> failure
     Just (HVal _) -> failure
     Just (va' :+ vb') -> do
-      {- va <- freshenVar va
+      va <- freshenVar va
       vb <- freshenVar vb
       va' <- freshenVar va'
       vb' <- freshenVar vb'
       va === va'
-      vb === vb' -}
+      vb === vb'
       lookupVar va' >>= (=== Just a)
       lookupVar vb' >>= (=== Just b)
   vap' <- freshenVar vap
@@ -166,7 +166,7 @@ prt_unifyHutton gen = do
   vu' <- freshenVar vu
   vap' === vbp'
   vap' === vu'
-  traceM "## End Test ##"
+  -- traceM "## End Test ##"
 
 hprop_unifyHutton :: H.Property
 hprop_unifyHutton = mkProp $ prt_unifyHutton intGen
