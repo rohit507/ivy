@@ -25,6 +25,7 @@ module Ivy.Prelude (
   , force
   , errEq
   , GetErr(..)
+  , crushThese
 ) where
 
 import Intro hiding (Item)
@@ -54,13 +55,24 @@ import Control.Monad.Logic as P hiding (fail)
 import Data.Constraint.Unsafe
 import qualified Control.Monad.Fail as B (fail,MonadFail)
 
+crushThese :: These (Maybe a) (Maybe b) -> Maybe (These a b)
+crushThese = \case
+  This Nothing   -> Nothing
+  This (Just ta) -> Just $ This ta
+  --
+  That Nothing   -> Nothing
+  That (Just tb) -> Just $ That tb
+  --
+  These Nothing   Nothing   -> Nothing
+  These (Just ta) Nothing   -> Just $ This ta
+  These Nothing   (Just tb) -> Just $ That tb
+  These (Just ta) (Just tb) -> Just $ These ta tb
+
 instance (Show a) => Show (TypeMap (OfType a)) where
   show tm = "(empty" <> mconcat (TM.toList @String (TM.map printMember tm)) <> ")"
     where
       printMember :: forall t. Typeable t => Proxy t -> a -> String
       printMember p a = " <: (" <> show p <> ", " <> show a <> ")"
-
-
 
 errEq :: forall e m. (MonadError e m) :- (e ~ Err m)
 errEq = unsafeCoerceConstraint

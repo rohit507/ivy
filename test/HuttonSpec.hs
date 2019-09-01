@@ -1,6 +1,7 @@
 
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-|
 Module      : SudokuSpec
@@ -56,6 +57,9 @@ deriving instance Traversable (MinF a)
 deriving newtype instance (Eq a) => Eq (MinF a f)
 deriving newtype instance (Ord a) => Ord (MinF a f)
 
+instance (Eq a) => Eq1 (MinF a) where
+  liftEq _ (MinF a) (MinF b) = a == b
+
 instance (Ord a) => JoinSemiLattice1 e (MinF a) where
   liftLatJoin (MinF a) (MinF b) = Right . MinF $ min a b
 
@@ -74,10 +78,11 @@ instance Eq a => Eq1 (HuttonF a) where
   liftEq _ (HVal a) (HVal b) = a == b
   liftEq _ _ _ = False
 
-instance (Num a, Show a, NonUnifiableErr e a) => JoinSemiLattice1 e (HuttonF a) where
+instance (Num a, Show a, NonUnifiableErr e (HuttonF a ()))
+  => JoinSemiLattice1 e (HuttonF a) where
   liftLatJoin (a :+ b) (a' :+ b') = Right $ (These a a') :+ (These b b')
   liftLatJoin (HVal a) (HVal b) = Right $ HVal (a + b)
-  liftLatJoin a b = Left $ termsNotUnifiable a b
+  liftLatJoin a b = Left $ termsNotUnifiable (const () <$> a) (const () <$> b)
 
 instance (Typeable a) => Property (Min a) where
   type From (Min a) = HuttonF a
@@ -90,3 +95,78 @@ instance (Typeable a) => Property (ConstProp a) where
   type From (ConstProp a) = HuttonF a
   type To (ConstProp a) = ConstF a
   rep = ConstProp
+
+prt_unifyMin :: forall a e m. (Ord a
+                             ,Show a
+                             ,MonadProperties e m
+                             ,MonadBind e m (MinF a)
+                             ,forall t. MonadBind e (PropertyT m) t => MonadBind e m t
+                             ,MonadAssume e m (MinF a))
+           => Gen a -> PropertyT m ()
+prt_unifyMin gen = do
+  a <- MinF <$> forAll gen
+  annotateShow a
+  b <- MinF <$> forAll gen
+  annotateShow b
+  va <- newVar a
+  annotateShow va
+  vb <- newVar b
+  annotateShow vb
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just b)
+  vu <- unify va vb
+  annotateShow vu
+  lookupVar va >>= (=== Just (min a b))
+  lookupVar vb >>= (=== Just (min a b))
+  lookupVar vu >>= (=== Just (min a b))
+  va' <- freshenVar va
+  vb' <- freshenVar vb
+  vu' <- freshenVar vu
+  va' === vb'
+  va' === vu'
+
+hprop_unifyMin :: H.Property
+hprop_unifyMin = mkProp $ prt_unifyMin intGen
+
+prt_unifyHutton :: forall a e m. (Ord a
+                             ,Show a
+                             ,MonadProperties e m
+                             ,forall t. MonadBind e (PropertyT m) t => MonadBind e m t
+                             ,MonadAssume e m (HuttonF a))
+           => Gen a -> PropertyT m ()
+prt_unifyHutton gen = do
+  traceM "## Begin Test ##"
+  a <- HVal <$> forAll gen
+  b <- HVal <$> forAll gen
+  va <- newVar a
+  vb <- newVar b
+  vc <- freeVar
+  vd <- freeVar
+  vap <- newVar (va :+ vc)
+  vbp <- newVar (vd :+ vb)
+  lookupVar vap >>= (=== Just (va :+ vc))
+  lookupVar vbp >>= (=== Just (vd :+ vb))
+  traceM "pre-unify"
+  vu <- unify vap vbp
+  traceM "post-unify"
+  lookupVar vu >>= \case
+    Nothing -> failure
+    Just (HVal _) -> failure
+    Just (va' :+ vb') -> do
+      {- va <- freshenVar va
+      vb <- freshenVar vb
+      va' <- freshenVar va'
+      vb' <- freshenVar vb'
+      va === va'
+      vb === vb' -}
+      lookupVar va' >>= (=== Just a)
+      lookupVar vb' >>= (=== Just b)
+  vap' <- freshenVar vap
+  vbp' <- freshenVar vbp
+  vu' <- freshenVar vu
+  vap' === vbp'
+  vap' === vu'
+  traceM "## End Test ##"
+
+hprop_unifyHutton :: H.Property
+hprop_unifyHutton = mkProp $ prt_unifyHutton intGen

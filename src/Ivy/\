@@ -203,8 +203,7 @@ recBinOpF :: forall a b c e m t. (Show a, MonadBind e m t, JoinSemiLattice1 e t)
          -> c
          -> These (Var m t) (Var m t)
          -> m a
-recBinOpF BinOpContext{..} = trace "getF" $ \ recurse ctxt inputs -> do
-  traceM "start recBinOpF"
+recBinOpF BinOpContext{..} = \ recurse ctxt inputs -> do
   checked <- check ctxt inputs
   traceShowM ('r','c', checked)
   flip maybeM (pure checked) $ do
