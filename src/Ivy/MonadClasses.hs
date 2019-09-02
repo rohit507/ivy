@@ -347,14 +347,14 @@ subsume :: forall e m t. ( MonadAssume e m t
                         , MonadProperties e m
                         , MonadProperties e (Rule m)
                         ) => Var m t -> Var m t -> m (Var m t)
-subsume a b ={- do
+subsume a b = do
   reverseSub <- (b `isAssumedSubsumed` a)
   sub <- a `isAssumedSubsumed` b
   isUni <- a `isAssumedUnified` b
   if
     | reverseSub && not isUni -> unify a b
     | sub || isUni -> freshenVar b
-    | otherwise -> -}(addRule $ performSubsume a b *> skip) *> freshenVar b
+    | otherwise -> (addRule $ performSubsume a b *> skip) *> freshenVar b
 
   where
 
@@ -383,7 +383,7 @@ subsume a b ={- do
       -- traceM $ "check these : " <> show (a,b)
       reverseSub <- b `isAssumedSubsumed` a
       sub        <- a `isAssumedSubsumed` b
-      isUni      <- a `isAssumedUnified` b
+      isUni      <- a `isAssumedUnified`  b
       r <- if
         | reverseSub && not isUni -> Just <$> unify a b
         | sub || isUni -> pure $ Just b
