@@ -134,13 +134,14 @@ bindVarS v t = do
     unless (HS.null newDeps) $
       traverse_ (tv `dependsOn`) $ HS.toList newDeps
     -- traceShowM ('b','c',lostDeps, newDeps, otd, ntd)
-    pure $ HS.null lostDeps || HS.null newDeps
+    pure . not $ HS.null lostDeps && HS.null newDeps
   -- traceShowM =<< (('b','d',) <$> use ruleHistories)
   v' <- getRepresentative v
   setTermValue v' $ Just nt
   -- traceShowM =<< (('b','e',) <$> use ruleHistories)
   -- When the term has changed in some salient way we need to push updates.
   let dirty = depChange || (not . fromMaybe False $ (liftEq (==)) <$> (Just nt) <*> mot)
+  -- traceShowM ('b', dirty, depChange)
   when (dirty) $ do
     -- traceShowM =<< (('b','1',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',depChange,dirty,) <$> use dependencies)
@@ -342,7 +343,9 @@ instance (MonadBind e (IntBindT m) t, BSEMTC e m t) => MonadAssume e (IntBindT m
   isAssumedSubsumed a b = IntBindT $ do
     -- traceM $ "assume sub : " <> show a <> show b
     assert <- use assertions
+    -- traceM $ "asserted : " <> show assert
     assume <- view assumptions
+    -- traceM $ "assumed : " <> show assume
     pure $ isAssertedSubsumedL
              (toSomeVar @(IntBindT m) a)
              (toSomeVar @(IntBindT m) b) [assume, assert]
@@ -407,7 +410,7 @@ instance ( MonadRule e m
     -- traceM $ "add addumed to : " <> show (a, b, old)
     RuleT $ assumptions %= addUniAssertion (toSomeVar @m a) (toSomeVar @m b)
     a <- m
-    n <- RuleT $ use @RuleMeta assumptions
+    _ <- RuleT $ use @RuleMeta assumptions
     -- traceM $ "popAssumedFrom : " <> show n
     RuleT $ assumptions .= old
     pure a
@@ -446,24 +449,26 @@ instance ( MonadRule e m
     pure (isAssertedUnified a' b' assumed)
       ||^ (liftAssumed @m @t isAssumedUnified a' b')
 
-  -- | It is unclear is this is
+  -- | It is unclear is this is correct
   isAssumedSubsumed :: Var m t -> Var m t -> RuleT m Bool
   isAssumedSubsumed a b = do
+    -- traceM $ "checking assumed : " <> show (a,b)
     assumed :: Assertions SomeVar <- RuleT $ use assumptions
+    -- traceM $ "has : " <> show assumed
     let a' = getRep (toSomeVar @m a) assumed
         b' = getRep (toSomeVar @m b) assumed
     pure (isAssertedSubsumed a' b' assumed)
       ||^ (liftAssumed @m @t isAssumedSubsumed a' b')
 
-liftAssumed :: forall m t d. (Typeable m, Typeable t)
-  => (Var m t -> Var m t -> d) -> SomeVar -> SomeVar -> d
+liftAssumed :: forall m t tr d. (Typeable m, Typeable t, MonadTrans tr, Monad m)
+  => (Var m t -> Var m t -> m d) -> SomeVar -> SomeVar -> tr m d
 liftAssumed f (SomeVar tm tt v) (SomeVar tm' tt' v')
   = fromMaybe (panic "undefined") $ do
         HRefl <- eqTypeRep tm tm'
         HRefl <- eqTypeRep tm (typeRep @m)
         HRefl <- eqTypeRep tt tt'
         HRefl <- eqTypeRep tt (typeRep @t)
-        pure $ f v v'
+        pure $ lift $ f v v'
 
 
 instance ( MonadRule e m
@@ -805,9 +810,9 @@ triggerRule rid = lookupRule rid >>= \case
   Nothing -> panic "unreachable"
   Just rs -> do
     -- traceShowM ('t', rid)
-    -- traceShowM =<< (('t','r',rid,) <$> use ruleHistories)
+    --traceShowM =<< (('t','r',rid,) <$> use ruleHistories)
     results <- uncurry runRule rs
-    -- traceShowM ('t','1', rid)
+    -- traceShowM =<< ('t','1', rid,) <$> use ruleHistories
     traverse_ (uncurry insertRule) results
     -- traceShowM ('t','2', length results)
 
@@ -831,11 +836,13 @@ cleanAll = do
     -- traceM $ "cleaning : " <> show dirty
     dirtySet .= mempty
     traverse_ clean $ HS.toList dirty
-    -- traceM $ "foo"
+    -- traceM $ "cleaned"
     cleanAll
 
     where
 
       clean :: forall m. (BSMC m) => ExID -> BSM m ()
-      clean (RID r) = triggerRule r
-      clean e@(TID _ _) = skip -- traceShowM =<< ('c',e,,) <$> getDependents e <*> getDependencies e
+      clean (RID r) = do
+        triggerRule r
+        -- traceM $ "cleaned " <> show r
+      clean (TID _ _) = skip -- traceShowM =<< ('c',e,,) <$> getDependents e <*> getDependencies e

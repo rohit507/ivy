@@ -353,7 +353,7 @@ subsume a b = (addRule $ performSubsume a b *> skip) *> freshenVar b
 
     -- performSubsume :: Var m t -> Var m t -> Rule m (Var m t)
     performSubsume a b = do
-      -- traceM $ "subsuming :" <> show a <> show b
+      traceM $ "subsuming :" <> show a <> show b
       recBinOp fns (These a b)
 
     fns :: BinOpFuncs (Var m t) (t (Var m t)) (Var m t) e (Rule m) t
@@ -363,41 +363,37 @@ subsume a b = (addRule $ performSubsume a b *> skip) *> freshenVar b
 
     -- check :: These (Var m t) (Var m t) -> Rule m (Maybe (Var m t))
     check (This a) = do
-      -- traceM "check this"
+      traceM "check this"
       Just <$> (performSubsume a =<< freeVar)
     check (That b) = do
-      -- traceM "check that"
+      traceM "check that"
       pure $ Just b
     -- Even if a does already subsume b we still need to run the recursive
     -- pass of the rule, since it will update the subsumed term anyway
     -- The only other case occours when two terms subsume each other and
     -- need to be unified.
     check (These a b) = do
-      -- traceM $ "check these : " <> show (a,b)
+      traceM $ "check these : " <> show (a,b)
       reverseSub <- (b `isAssumedSubsumed` a)
-      sub <- a `isAssumedSubsumed` b
       isUni <- a `isAssumedUnified` b
-      r <- if
-        | reverseSub && not isUni -> Just <$> unify a b
-        | sub -> pure $Just b
-        | otherwise -> pure Nothing
-      -- traceM $ "result : " <> show r
+      r <- if (reverseSub && not isUni)
+           then Just <$> unify a b
+           else pure Nothing
+      traceM $ "result : " <> show r
       pure r
 
     assume :: forall c. These (Var m t) (Var m t) -> Rule m c -> Rule m c
-    assume (These a b) = -- trace "assuming" $
-      assumeSubsumed a b
+    assume (These a b) = trace "assuming" $ assumeSubsumed a b
     assume _ = id
 
-    handle ::e -> Rule m c
+    -- handle ::e -> Rule m c
     handle = throwError
 
-    traversing = traverse -- (trace "f" $ f)
+    traversing = traverse
 
     merge :: These (Var m t) (Var m t) -> Maybe (t (Var m t)) -> Rule m (Var m t)
     merge (These a b) mTerm = do
-      -- traceM $ "merging : " <> show a <> show b
-      assertSubsumed a b
-      maybe (pure b) (bindVar b) mTerm
+      traceM $ "merging : " <> show a <> show b
+      maybe (pure b) (bindVar b) mTerm <* assertSubsumed a b
 
     merge _ _ = panic "unreachable"

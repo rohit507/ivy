@@ -60,8 +60,9 @@ deriving newtype instance (Ord a) => Ord (MinF a f)
 instance (Eq a) => Eq1 (MinF a) where
   liftEq _ (MinF a) (MinF b) = a == b
 
-instance (Ord a) => JoinSemiLattice1 e (MinF a) where
-  liftLatJoin (MinF a) (MinF b) = Right . MinF $ min a b
+instance (Ord a, Show a) => JoinSemiLattice1 e (MinF a) where
+  liftLatJoin (MinF a) (MinF b) = -- trace ("min of :" <> show (a,b, min a b)) $
+    Right . MinF $ min a b
 
 data HuttonF (a :: Type) (f :: Type) where
   (:+) :: f -> f -> HuttonF a f
@@ -170,3 +171,98 @@ prt_unifyHutton gen = do
 
 hprop_unifyHutton :: H.Property
 hprop_unifyHutton = mkProp $ prt_unifyHutton intGen
+
+prt_subsumeMin :: forall a e m. (Ord a
+                             ,Show a
+                             ,MonadProperties e m
+                             ,MonadRule e m
+                             ,MonadProperties e (Rule m)
+                             ,MonadBind e m (MinF a)
+                             ,forall t. MonadBind e (PropertyT m) t => MonadBind e m t
+                             ,MonadAssume e m (MinF a)
+                             ,MonadAssume e (Rule m) (MinF a)
+                             )
+           => Gen a -> PropertyT m ()
+prt_subsumeMin gen = do
+  -- Base values
+  a <- MinF <$> forAll gen
+  b <- MinF <$> forAll gen
+  c <- MinF <$> forAll gen
+  -- Vars
+  va :: Var m (MinF a) <- freeVar
+  vb :: Var m (MinF a) <- freeVar
+  vc :: Var m (MinF a) <- freeVar
+  -- One subsumed pair
+  vab :: Var m (MinF a) <- freeVar
+  lift $ subsume va vab
+  lift $ subsume vb vab
+  -- other pair
+  vbc :: Var m (MinF a) <- freeVar
+  lift $ subsume vb vbc
+  lift $ subsume vc vbc
+  -- status
+  lookupVar va >>= (=== Nothing)
+  lookupVar vb >>= (=== Nothing)
+  lookupVar vc >>= (=== Nothing)
+  lookupVar vab >>= (=== Nothing)
+  lookupVar vbc >>= (=== Nothing)
+
+  annotateShow va
+  annotateShow vb
+  annotateShow vc
+  annotateShow vab
+  annotateShow vbc
+
+  doFirst <- forAll $ Gen.int (Range.linear 0 2)
+  annotateShow doFirst
+
+  case doFirst of
+    0 -> do
+      bindVar va a
+      lookupVar va >>= (=== Just a)
+      lookupVar vb >>= (=== Nothing)
+      lookupVar vc >>= (=== Nothing)
+      lookupVar vab >>= (=== Just a)
+      lookupVar vbc >>= (=== Nothing)
+    1 -> do
+      bindVar vb b
+      lookupVar va >>= (=== Nothing)
+      lookupVar vb >>= (=== Just b)
+      lookupVar vc >>= (=== Nothing)
+      lookupVar vab >>= (=== Just b)
+      lookupVar vbc >>= (=== Just b)
+    2 -> do
+      bindVar vc c
+      lookupVar va >>= (=== Nothing)
+      lookupVar vb >>= (=== Nothing)
+      lookupVar vc >>= (=== Just c)
+      lookupVar vab >>= (=== Nothing)
+      lookupVar vbc >>= (=== Just c)
+
+    _ -> panic "out of range"
+
+  lookupVar va >>= annotateShow
+  lookupVar vb >>= annotateShow
+  lookupVar vc >>= annotateShow
+  lookupVar vab >>= annotateShow
+  lookupVar vbc >>= annotateShow
+
+  bindVar va a
+  bindVar vb b
+  bindVar vc c
+
+  lookupVar va >>= annotateShow
+  lookupVar vb >>= annotateShow
+  lookupVar vc >>= annotateShow
+  lookupVar vab >>= annotateShow
+  lookupVar vbc >>= annotateShow
+
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just b)
+  lookupVar vc >>= (=== Just c)
+  lookupVar vab >>= (=== (Just $ min a b))
+  lookupVar vbc >>= (=== (Just $ min b c))
+  --
+
+hprop_subsumeMin :: H.Property
+hprop_subsumeMin = mkProp $ prt_subsumeMin intGen

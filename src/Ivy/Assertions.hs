@@ -114,10 +114,11 @@ isAssertedUnifiedL i j (l:ls) = -- trace "au" $
     j' = getRep j l
 
 isAssertedSubsumed :: (Ord i, Hashable i) => i -> i -> Assertions i -> Bool
-isAssertedSubsumed i j a = (isAssertedUnified i j a) || (
-  case HM.lookup (getRep i a) (a ^. subsumptions) of
-    Nothing -> False
-    Just b  -> HS.member (getRep j a) b)
+isAssertedSubsumed i j a = -- trace "is Sub" $
+  (isAssertedUnified i j a) || (
+    case HM.lookup (getRep i a) (a ^. subsumptions) of
+      Nothing -> False
+      Just b  -> HS.member (getRep j a) b)
 {-# INLINE isAssertedSubsumed #-}
 
 -- | It is unclear if this meets the property that we expect, namely that:
@@ -131,7 +132,8 @@ isAssertedSubsumed i j a = (isAssertedUnified i j a) || (
 --            elements from the stack will fail.
 isAssertedSubsumedL :: (Ord i, Hashable i) => i -> i -> [Assertions i] -> Bool
 isAssertedSubsumedL _ _ [] = False
-isAssertedSubsumedL i j a@(l:ls) = isAssertedSubsumed i j l || isAssertedSubsumedL i' j' ls
+isAssertedSubsumedL i j a@(l:ls) = -- trace "is sub L" $
+  isAssertedSubsumed i j l || isAssertedSubsumedL i' j' ls
   where
     i' = getRepL i a
     j' = getRepL j a
