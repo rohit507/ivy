@@ -327,28 +327,21 @@ prt_subsumeUnify :: forall a e m. (Ord a
                              )
            => Gen a -> PropertyT m ()
 prt_subsumeUnify gen = do
-  traceM "a"
   a <- MinF <$> forAll gen
   b <- MinF <$> forAll gen
 
-  traceM "b"
   va :: Var m (MinF a) <- newVar a
   vb :: Var m (MinF a) <- newVar b
 
-  traceM "c"
   lookupVar va >>= (=== Just a)
   lookupVar vb >>= (=== Just b)
 
-  traceM "1"
   lift $ subsume va vb
-  traceM "2"
 
   lookupVar va >>= (=== Just a)
   lookupVar vb >>= (=== Just (min a b))
 
-  traceM "3"
   lift $ subsume vb va
-  traceM "4"
 
   lookupVar va >>= (=== Just (min a b))
   lookupVar vb >>= (=== Just (min a b))

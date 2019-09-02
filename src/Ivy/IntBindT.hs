@@ -44,8 +44,8 @@ import qualified Data.Set as S
 -- import Data.Partition (Partition)
 -- import qualified Data.Partition as P
 
-import qualified Control.Monad.Fail (fail)
-import Control.Monad (ap)
+-- import qualified Control.Monad.Fail (fail)
+-- import Control.Monad (ap)
 -- import Data.IORef
 -- import Control.Concurrent.Supply
 
@@ -155,23 +155,31 @@ bindVarS v t = do
 -- | TODO :: Fix this, It's not doing sensible things
 redirectVarS :: forall e m t. (BSEMTC e m t) => TermID t -> TermID t -> BSM m (TermID t)
 redirectVarS old new = do
+  -- traceM "rv1"
   o' <- getRepresentative old
   n' <- getRepresentative new
   redirectRelations @e o' n'
   redirectRules o' n'
+  -- traceM "rv2"
   when (o' /= n') $ do
     let to' = toExID o'
         tn' = toExID n'
+    -- traceM "rv3"
     -- Move depends from old to new
     getDependencies @m to' >>= traverse_ (manageDependencies to' tn')
     getDependents   @m tn' >>= traverse_ (manageDependents   to' tn')
+    -- traceM "rv4"
     to' `dependsOn` tn'
     -- lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
     -- traceShowM =<< (('r',to',tn',) <$> use dependencies)
     markDirty tn'
+    -- traceM "rv4.5"
+  -- traceM "rv5"
   n'' <- getRepresentative n'
+  -- traceM "rv6"
   cleanAll
+  -- traceM "rv7"
   pure n''
 
   where
@@ -826,8 +834,8 @@ addToWatched t = do
 markDirty :: forall m. (BSMC m) => ExID -> BSM m ()
 markDirty t = unlessM (HS.member t <$> use dirtySet) $ do
     -- traceM $ "marking : " <> show t
-    traverse_ markDirty . HS.toList =<< getDependents t
     dirtySet %= HS.insert t
+    traverse_ markDirty . HS.toList =<< getDependents t
 
 cleanAll :: forall m. (BSMC m) => BSM m ()
 cleanAll = do

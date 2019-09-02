@@ -17,7 +17,7 @@ import Intro hiding (Item)
 import Ivy.Prelude
 import Algebra.Lattice
 -- import qualified Data.Text as Text
-import Data.HashSet (HashSet)
+-- import Data.HashSet (HashSet)
 -- import qualified Data.HashSet as HS
 -- import Ivy.Assertions
 
@@ -246,7 +246,7 @@ equals a b = recBinOp fns (These a b)
     check (These a b) = do
       -- traceM $ "checking : " <> show a <> show b
       ifM (a `isAssumedEqual` b) (pure $ Just True) (pure $ Nothing)
-    check v = do
+    check _ = do
       -- traceM $ "no check : " <>  show v
       pure $ Just True
 
@@ -278,6 +278,7 @@ unify :: forall e m t. ( MonadAssume e m t
                       )
    => Var m t -> Var m t -> m (Var m t)
 unify a b = do
+  -- traceM "u1"
   recBinOp fns (These a b)
 
    where
@@ -311,10 +312,15 @@ unify a b = do
     traversing = traverse
 
     merge (These a b) mTerm = do
+      -- traceM "merge 1"
       unifyProps a b
+      -- traceM "merge 2"
       b' <- maybe (pure b) (bindVar b) mTerm
+      -- traceM "merge 3"
       redirectVar a b'
+      -- traceM "merge 4"
       assertUnified a b
+      -- traceM "merge 5"
       pure b'
     merge _ _ = panic "unreachable"
 
@@ -348,13 +354,23 @@ subsume :: forall e m t. ( MonadAssume e m t
                         , MonadProperties e (Rule m)
                         ) => Var m t -> Var m t -> m (Var m t)
 subsume a b = do
+  -- traceM $ "start subsume : " <> show (a,b)
   reverseSub <- (b `isAssumedSubsumed` a)
+  -- traceM "s1"
   sub <- a `isAssumedSubsumed` b
+  -- traceM "s2"
   isUni <- a `isAssumedUnified` b
+  -- traceM "s3"
   if
-    | reverseSub && not isUni -> unify a b
-    | sub || isUni -> freshenVar b
-    | otherwise -> (addRule $ performSubsume a b *> skip) *> freshenVar b
+    | reverseSub && not isUni -> do
+        -- traceM "su"
+        unify a b
+    | sub || isUni -> do
+        -- traceM "sf"
+        freshenVar b
+    | otherwise -> do
+        -- traceM "ss"
+        (addRule $ performSubsume a b *> skip) *> freshenVar b
 
   where
 
