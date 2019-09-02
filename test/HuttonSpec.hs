@@ -56,6 +56,7 @@ deriving instance Foldable (MinF a)
 deriving instance Traversable (MinF a)
 deriving newtype instance (Eq a) => Eq (MinF a f)
 deriving newtype instance (Ord a) => Ord (MinF a f)
+deriving newtype instance (Num a) => Num (MinF a f)
 
 instance (Eq a) => Eq1 (MinF a) where
   liftEq _ (MinF a) (MinF b) = a == b
@@ -266,3 +267,95 @@ prt_subsumeMin gen = do
 
 hprop_subsumeMin :: H.Property
 hprop_subsumeMin = mkProp $ prt_subsumeMin intGen
+
+prt_subsumeMinCyclic :: forall a e m. (Ord a
+                             ,Show a
+                             ,Num a
+                             ,MonadProperties e m
+                             ,MonadRule e m
+                             ,MonadProperties e (Rule m)
+                             ,MonadBind e m (MinF a)
+                             ,forall t. MonadBind e (PropertyT m) t => MonadBind e m t
+                             ,MonadAssume e m (MinF a)
+                             ,MonadAssume e (Rule m) (MinF a)
+                             )
+           => Gen a -> PropertyT m ()
+prt_subsumeMinCyclic gen = do
+  -- Base values
+  a <- MinF <$> forAll gen
+  b <- MinF <$> forAll gen
+  c <- MinF <$> forAll gen
+  -- Vars
+  va :: Var m (MinF a) <- newVar a
+  vb :: Var m (MinF a) <- newVar b
+  vc :: Var m (MinF a) <- newVar c
+
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just b)
+  lookupVar vc >>= (=== Just c)
+
+  lift $ subsume va vb
+  lift $ subsume vb vc
+  lift $ subsume vc va
+
+  let n = min a (min b c)
+      m = n - 1
+
+  lookupVar va >>= (=== Just n)
+  lookupVar vb >>= (=== Just n)
+  lookupVar vc >>= (=== Just n)
+
+  bindVar va m
+
+  lookupVar va >>= (=== Just m)
+  lookupVar vb >>= (=== Just m)
+  lookupVar vc >>= (=== Just m)
+
+
+hprop_subsumeMinCyclic :: H.Property
+hprop_subsumeMinCyclic = mkProp $ prt_subsumeMinCyclic intGen
+
+prt_subsumeUnify :: forall a e m. (Ord a
+                             ,Show a
+                             ,MonadProperties e m
+                             ,MonadRule e m
+                             ,MonadProperties e (Rule m)
+                             ,MonadBind e m (MinF a)
+                             ,forall t. MonadBind e (PropertyT m) t => MonadBind e m t
+                             ,MonadAssume e m (MinF a)
+                             ,MonadAssume e (Rule m) (MinF a)
+                             )
+           => Gen a -> PropertyT m ()
+prt_subsumeUnify gen = do
+  traceM "a"
+  a <- MinF <$> forAll gen
+  b <- MinF <$> forAll gen
+
+  traceM "b"
+  va :: Var m (MinF a) <- newVar a
+  vb :: Var m (MinF a) <- newVar b
+
+  traceM "c"
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just b)
+
+  traceM "1"
+  lift $ subsume va vb
+  traceM "2"
+
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just (min a b))
+
+  traceM "3"
+  lift $ subsume vb va
+  traceM "4"
+
+  lookupVar va >>= (=== Just (min a b))
+  lookupVar vb >>= (=== Just (min a b))
+
+  va' <- freshenVar va
+  vb' <- freshenVar vb
+  va' === vb'
+
+hprop_subsumeUnify :: H.Property
+hprop_subsumeUnify = mkProp $ prt_subsumeUnify intGen
