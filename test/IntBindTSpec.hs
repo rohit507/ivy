@@ -269,17 +269,17 @@ prt_sumProp gen = do
 
   (forAll $ Gen.element @_ @String ["ab","as","bs"]) >>= \case
     "ab" -> do
-      cover 20 "ab" True
+      cover 20 "a and b" True
       _ <- bindVar va a
       _ <- bindVar vb b
       skip
     "as" -> do
-      cover 20 "as" True
+      cover 20 "a and s" True
       _ <- bindVar va a
       _ <- bindVar vs s
       skip
     "bs" -> do
-      cover 20 "bs" True
+      cover 20 "b and s" True
       _ <- bindVar vb b
       _ <- bindVar vs s
       skip

@@ -214,11 +214,12 @@ prt_subsumeMin gen = do
   annotateShow vab
   annotateShow vbc
 
-  doFirst <- forAll $ Gen.int (Range.linear 0 2)
+  doFirst :: Int <- forAll $ Gen.element [0,1,2]
   annotateShow doFirst
 
   case doFirst of
     0 -> do
+      cover 20 "a first" True
       bindVar va a
       lookupVar va >>= (=== Just a)
       lookupVar vb >>= (=== Nothing)
@@ -226,6 +227,7 @@ prt_subsumeMin gen = do
       lookupVar vab >>= (=== Just a)
       lookupVar vbc >>= (=== Nothing)
     1 -> do
+      cover 20 "b first" True
       bindVar vb b
       lookupVar va >>= (=== Nothing)
       lookupVar vb >>= (=== Just b)
@@ -233,6 +235,7 @@ prt_subsumeMin gen = do
       lookupVar vab >>= (=== Just b)
       lookupVar vbc >>= (=== Just b)
     2 -> do
+      cover 20 "c first" True
       bindVar vc c
       lookupVar va >>= (=== Nothing)
       lookupVar vb >>= (=== Nothing)

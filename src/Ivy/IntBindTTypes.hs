@@ -347,6 +347,7 @@ data LookF a where
   Lookup :: (MonadBind (Err m) m t)
     => TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
 
+
 type RT m = ExceptT (Err m) (StateT RuleMeta (LogicT m))
 type RTP m = ProgramT LookF (RT m)
 
