@@ -30,7 +30,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.HashSet (HashSet)
 -- import qualified Data.HashSet as HS
 -- import qualified GHC.Base (Functor, fmap)
-import qualified GHC.Base (fmap)
+-- import qualified GHC.Base (fmap)
 -- import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import Algebra.Graph.AdjacencyMap (AdjacencyMap)
 import qualified Algebra.Graph.AdjacencyMap as G
@@ -40,7 +40,7 @@ import qualified Algebra.Graph.AdjacencyMap as G
 -- import qualified Data.Partition as P
 
 import qualified Control.Monad.Fail as F (fail)
-import Control.Monad (ap)
+-- import Control.Monad (ap)
 -- import Data.IORef
 -- import Control.Concurrent.Supply
 
@@ -112,7 +112,7 @@ instance Show ExID where
   show = showExID
 
 showExID :: ExID -> String
-showExID (TID tt t) = "(TID " {- (typeRep @(" <> show tt <> ")) ("-} <> show t <> "))"
+showExID (TID _tt t) = "(TID " {- (typeRep @(" <> show tt <> ")) ("-} <> show t <> "))"
 showExID (RID r) = "(RID (" <> show r <> "))"
 
 instance Eq ExID where
@@ -279,12 +279,12 @@ instance MFunctor IntBindT where
 
 data RuleHistories = RuleHistories
   { _term :: Maybe RuleID
-  , _nextStep :: HashMap ExID RuleHistories }
+  , _nextStep :: HashMap ExID (HashMap Int RuleHistories) }
   deriving (Eq, Ord, Show)
 
 data RuleHistory = RuleHistory
   { _family :: RuleID
-  , _nextStep :: [ExID] }
+  , _nextStep :: [(ExID,Int)] }
   deriving (Eq, Ord, Show)
 
 type SomeVarC m t =  (Ord (Var m t)
@@ -343,13 +343,12 @@ toSomeVar v = SomeVar (typeRep @m) (typeRep @t) v
 newRuleMeta :: RuleID -> RuleMeta
 newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
-
 data LookF a where
   Lookup :: (MonadBind (Err m) m t)
     => TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
 
 type RT m = ExceptT (Err m) (StateT RuleMeta (LogicT m))
-type RTP m = RT (ProgramT LookF m)
+type RTP m = ProgramT LookF (RT m)
 
 newtype RuleT m a where
   RuleT :: {getRuleT :: RTP m a} -> RuleT m a
@@ -364,21 +363,36 @@ deriving newtype instance (Monad m) => Monad (RuleT m)
 deriving newtype instance (MonadError e m, GetErr m, Err m ~ e) => MonadError e (RuleT m)
 
 instance (Monad m) => Alternative (RuleT m) where
-  (RuleT a) <|> (RuleT b) = RuleT $ _ $ ExceptT $ StateT $ _
+  empty = RuleT . lift . lift . lift $ (empty :: LogicT m a)
+  (RuleT a) <|> (RuleT b) = RuleT . join . lift $ alternated >>= \case
+    Return a -> pure . pure $ a
+    inst :>>= f -> pure $ singleton inst >>= f
 
+    where
 
-
+      alternated = ExceptT $ StateT $ \ s -> do
+        interleave (flip runStateT s . runExceptT $ viewT a)
+                   (flip runStateT s . runExceptT $ viewT b)
 
 instance (Monad m) => MonadPlus (RuleT m)
 
 instance (Monad m) => MonadFail (RuleT m) where
-  fail s = RuleT $ lift . lift . lift $ (F.fail s :: LogicT m a)
+  fail s = if
+    | "Pattern match failure" `isPrefixOf` s ->
+            RuleT . lift . lift . lift $ F.fail s
+    | otherwise -> panic $ convertString s
 
 instance (GetErr m) => GetErr (RuleT m) where
   type Err (RuleT m) = Err m
 
 instance MonadTrans RuleT where
-  lift = RuleT . lift . lift . lift . lift
+  lift = RuleT . liftRTP
+
+liftRT :: (Monad m) => m a -> RT m a
+liftRT = lift . lift . lift
+
+liftRTP :: (Monad m) => m a -> RTP m a
+liftRTP = lift . liftRT
 
 execRule :: forall m a. (Monad m, Typeable m)
          => (forall t. (MonadBind (Err m) m t) => Var m t -> RT m ())
@@ -391,7 +405,6 @@ execRule note lookup act = (viewT . getRuleT $ act) >>= \case
       pure $ do
         note v
         pure . Right . RuleT $ (lift $ lookup v) >>= f
-
 
 makeFieldsNoPrefix ''Context
 makeFieldsNoPrefix ''Config

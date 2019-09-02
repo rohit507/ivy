@@ -257,6 +257,10 @@ prt_sumProp gen = do
   vb <- freeVar
   vs <- freeVar
 
+  annotateShow va
+  annotateShow vb
+  annotateShow vs
+
   lift . addRule $ sumPropRule @a @e @m va vb vs
 
   lookupVar va >>= (=== Nothing)
@@ -294,31 +298,22 @@ sumPropRule :: forall a e m. ( MonadRule e m
   => Var m (ConstF a) -> Var m (ConstF a) -> Var m (ConstF a) -> Rule m ()
 sumPropRule va vb vs
   = do
-  traceM $ "sp : " <> show (va, vb, vs)
-  forward va vb vs
-    <|> backward va vb vs
-    <|> backward vb va vs
+  forward va vb vs <|> backward va vb vs <|> backward vb va vs
 
   where
 
     forward va vb vs = do
-      traceM $ "f : " <> show (va, vb, vs)
       Just a <- lookupVar va
-      traceM "f2"
       Just b <- lookupVar vb
-      traceM "f3"
       _ <- bindVar vs (a + b)
-      traceM "f4"
       skip
 
+    -- NOTE :: We do use lookup orders to explicitly differentiate rules,
+    --        so for the moment you should make sure no alternatives
     backward va vb vs = do
-      traceM $ "b : " <> show (va, vb, vs)
       Just s <- lookupVar vs
-      traceM "b2"
       Just b <- lookupVar vb
-      traceM "b3"
       _ <- bindVar va (s - b)
-      traceM "b4"
       skip
 
 hprop_sumProp :: H.Property

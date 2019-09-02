@@ -656,15 +656,18 @@ redirectRules o n = do
 
     -- | If there are old and new members, we redirect them and merge their
     --   subtrees.
-    mergeRuleHistMap :: HashMap ExID RuleHistories
-                       -> BSM m (Bool, HashMap ExID RuleHistories)
+    mergeRuleHistMap :: HashMap ExID (HashMap Int RuleHistories)
+                       -> BSM m (Bool, HashMap ExID (HashMap Int RuleHistories))
     mergeRuleHistMap hm = do
-      let mo = (^. term) =<< HM.lookup (toExID o) hm
-          mn = (^. term) =<< HM.lookup (toExID n) hm
-      d <- fromMaybe False <$> sequenceA (redirectRule <$> mo <*> mn)
-      updates <- traverse mergeRuleHistories hm
-      let dirty  = d || (foldr (||) False . map fst $ updates)
-          result = map snd $ updates
+      let mo = traverse (^. term) =<< HM.lookup (toExID o) hm
+          mn = traverse (^. term) =<< HM.lookup (toExID n) hm
+          pairs = (HM.intersectionWith redirectRule) <$> mo <*> mn
+      d <- case pairs of
+        Nothing -> pure False
+        Just hm' -> any id <$> sequenceA (snd <$> HM.toList hm')
+      updates  <- traverse (traverse mergeRuleHistories) hm
+      let dirty  = d || (any id . map (any fst) $ updates)
+          result = map (map snd) $ updates
       pure (dirty, result)
 
     mergeRuleHistories ::  RuleHistories -> BSM m (Bool, RuleHistories)
@@ -717,13 +720,27 @@ getPropMap t = do
 runRule :: forall m. (BSMC m, Show (Err m))
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
-  -- traceM $ "Running Rule" <> show rm
-  catMaybes . map parseResults <$> (getIntBindT . observeAllT . flip runStateT rm . runExceptT $ exec rule)
+  r <- getIntBindT . observeAllT . flip runStateT rm  . runExceptT . exec $ rule
+  let annotated = zipWith (\ i (a, b) -> (a, insertID i b)) [0..] r
+      parsed   = map parseResults annotated
+      filtered = catMaybes parsed
+  pure filtered
 
   where
 
+    -- FIXME :: this is an absurd way to assign different identifiers to
+    --
+
+    insertID :: Int -> RuleMeta -> RuleMeta
+    insertID i (RuleMeta h w a)
+      = RuleMeta ((nextStep %~ (map $ replaceNum i)) h) w a
+
+    replaceNum :: Int -> (a,Int) -> (a,Int)
+    replaceNum i (a,-1) = (a,i)
+    replaceNum _ e = e
+
     exec :: RuleIB m () -> RTIB m (Either () (RuleIB m ()))
-    exec = execRule addToWatched (lift . lift . lift . lookupVar)
+    exec = execRule (addToWatched (-1)) (liftRT . lookupVar)
 
     parseResults :: (Either (Err m) (Either () (RuleT (IntBindT m) ())), RuleMeta)
                  -> Maybe (RuleMeta, RuleIB m ())
@@ -763,16 +780,19 @@ insertRule rm@(RuleMeta hist watch _) rule = do
     makeRuleHists :: RuleID -> RuleHistory -> HashMap RuleID RuleHistories
     makeRuleHists rid (RuleHistory fam steps) = HM.singleton fam (makeFromSteps rid steps)
 
-    makeFromSteps :: RuleID -> [ExID] -> RuleHistories
+    makeFromSteps :: RuleID -> [(ExID,Int)] -> RuleHistories
     makeFromSteps rid [] = RuleHistories (Just rid) mempty
-    makeFromSteps rid (u:us) = RuleHistories Nothing (HM.singleton u $ makeFromSteps rid us)
+    makeFromSteps rid ((u,i):us) = RuleHistories Nothing
+      (HM.singleton u . HM.singleton i $ makeFromSteps rid us)
 
     mergeRuleHistories :: RuleHistories -> RuleHistories -> RuleHistories
     mergeRuleHistories (RuleHistories f m) (RuleHistories f' m') =
-      RuleHistories (f' <|> f) (HM.unionWith mergeRuleHistories m m')
+      RuleHistories (f' <|> f) (HM.unionWith (HM.unionWith mergeRuleHistories) m m')
 
 freshenHist :: forall m. (BSMC m) => RuleHistory -> BSM m RuleHistory
-freshenHist (RuleHistory fam stps) = RuleHistory fam <$> traverse getRepExID stps
+freshenHist (RuleHistory fam stps) = RuleHistory fam <$> traverse getRep stps
+  where
+    getRep (a,b) = (,b) <$> getRepExID a
 
 getRepExID :: forall m. (BSMC m) => ExID -> BSM m ExID
 getRepExID (RID r) = RID <$> getRuleRep r
@@ -798,10 +818,10 @@ lookupRuleHistory rh@(RuleHistory fam _)
 
   where
 
-    lookupSteps :: [ExID] -> RuleHistories -> Maybe RuleID
+    lookupSteps :: [(ExID,Int)] -> RuleHistories -> Maybe RuleID
     lookupSteps [] (RuleHistories m _) = m
-    lookupSteps (e:es) (RuleHistories _ hm)
-      = HM.lookup e hm >>= lookupSteps es
+    lookupSteps ((e,i):es) (RuleHistories _ hm)
+      = HM.lookup e hm >>= HM.lookup i >>= lookupSteps es
 
 getRuleRep :: forall m. (BSMC m) => RuleID -> BSM m RuleID
 getRuleRep r = use (rules . at r) >>= \case
@@ -826,10 +846,10 @@ triggerRule rid = lookupRule rid >>= \case
 
 
 -- | adds a term to the watchlist and the history
-addToWatched :: forall m t. (BSMTC m t) => VarIB m t -> RTIB m ()
-addToWatched t = do
+addToWatched :: forall m t. (BSMTC m t) => Int -> VarIB m t -> RTIB m ()
+addToWatched i t = do
   watched %= HS.insert (toExID $ forceTID t)
-  history . nextStep %= (<> [toExID $ forceTID t])
+  history . nextStep %= (<> [(toExID $ forceTID t,i)])
 
 markDirty :: forall m. (BSMC m) => ExID -> BSM m ()
 markDirty t = unlessM (HS.member t <$> use dirtySet) $ do
