@@ -39,7 +39,7 @@ import qualified Algebra.Graph.AdjacencyMap as G
 -- import Data.Partition (Partition)
 -- import qualified Data.Partition as P
 
--- import qualified Control.Monad.Fail (fail)
+import qualified Control.Monad.Fail as F (fail)
 import Control.Monad (ap)
 -- import Data.IORef
 -- import Control.Concurrent.Supply
@@ -349,7 +349,7 @@ data LookF a where
     => TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
 
 type RT m = ExceptT (Err m) (StateT RuleMeta (LogicT m))
-type RTP m = ProgramT LookF (RT m)
+type RTP m = RT (ProgramT LookF m)
 
 newtype RuleT m a where
   RuleT :: {getRuleT :: RTP m a} -> RuleT m a
@@ -360,10 +360,19 @@ type RuleIB m = Rule (IntBindT m)
 deriving newtype instance (Monad m) => Functor (RuleT m)
 deriving newtype instance (Monad m) => Applicative (RuleT m)
 deriving newtype instance (Monad m) => Monad (RuleT m)
+
 deriving newtype instance (MonadError e m, GetErr m, Err m ~ e) => MonadError e (RuleT m)
-deriving newtype instance (Monad m, Monoid (Err m)) => Alternative (RuleT m)
-deriving newtype instance (Monad m, Monoid (Err m)) => MonadPlus (RuleT m)
-deriving newtype instance (Monad m) => MonadFail (RuleT m)
+
+instance (Monad m) => Alternative (RuleT m) where
+  (RuleT a) <|> (RuleT b) = RuleT $ _ $ ExceptT $ StateT $ _
+
+
+
+
+instance (Monad m) => MonadPlus (RuleT m)
+
+instance (Monad m) => MonadFail (RuleT m) where
+  fail s = RuleT $ lift . lift . lift $ (F.fail s :: LogicT m a)
 
 instance (GetErr m) => GetErr (RuleT m) where
   type Err (RuleT m) = Err m

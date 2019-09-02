@@ -232,3 +232,94 @@ prt_singleRule gen = do
 
 hprop_singleRule :: H.Property
 hprop_singleRule = mkProp $ prt_singleRule @Int @Text @(BindM Text) intGen
+
+
+prt_sumProp :: forall a e m. ( Var m ~ Var (Rule m)
+                            , MonadRule e m
+                            , MonadRule e (Rule m)
+                            , Alternative (Rule m)
+                            , MonadFail (Rule m)
+                            , MonadBind e (Rule m) (ConstF a)
+                            , MonadBind e m (ConstF a)
+                            , EqIsh a
+                            , Show a
+                            , Num a)
+             => Gen a -> PropertyT m ()
+prt_sumProp gen = do
+  a <- ConstF <$> forAll gen
+  annotateShow a
+  b <- ConstF <$> forAll gen
+  annotateShow b
+  let s = a + b
+  annotateShow s
+
+  va <- freeVar
+  vb <- freeVar
+  vs <- freeVar
+
+  lift . addRule $ sumPropRule @a @e @m va vb vs
+
+  lookupVar va >>= (=== Nothing)
+  lookupVar vb >>= (=== Nothing)
+  lookupVar vs >>= (=== Nothing)
+
+  (forAll $ Gen.element @_ @String ["ab","as","bs"]) >>= \case
+    "ab" -> do
+      cover 20 "ab" True
+      _ <- bindVar va a
+      _ <- bindVar vb b
+      skip
+    "as" -> do
+      cover 20 "as" True
+      _ <- bindVar va a
+      _ <- bindVar vs s
+      skip
+    "bs" -> do
+      cover 20 "bs" True
+      _ <- bindVar vb b
+      _ <- bindVar vs s
+      skip
+    _ -> panic "unreachable"
+
+  lookupVar va >>= (=== Just a)
+  lookupVar vb >>= (=== Just b)
+  lookupVar vs >>= (=== Just s)
+
+sumPropRule :: forall a e m. ( MonadRule e m
+                            , Alternative (Rule m)
+                            , MonadBind e (Rule m) (ConstF a)
+                            , MonadFail (Rule m)
+                            , Num a
+                            )
+  => Var m (ConstF a) -> Var m (ConstF a) -> Var m (ConstF a) -> Rule m ()
+sumPropRule va vb vs
+  = do
+  traceM $ "sp : " <> show (va, vb, vs)
+  forward va vb vs
+    <|> backward va vb vs
+    <|> backward vb va vs
+
+  where
+
+    forward va vb vs = do
+      traceM $ "f : " <> show (va, vb, vs)
+      Just a <- lookupVar va
+      traceM "f2"
+      Just b <- lookupVar vb
+      traceM "f3"
+      _ <- bindVar vs (a + b)
+      traceM "f4"
+      skip
+
+    backward va vb vs = do
+      traceM $ "b : " <> show (va, vb, vs)
+      Just s <- lookupVar vs
+      traceM "b2"
+      Just b <- lookupVar vb
+      traceM "b3"
+      _ <- bindVar va (s - b)
+      traceM "b4"
+      skip
+
+hprop_sumProp :: H.Property
+hprop_sumProp = mkProp $ prt_sumProp @Int @Text @(BindM Text) intGen
