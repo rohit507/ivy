@@ -161,7 +161,7 @@ class ( forall g. (MonadBind     e m g) => MonadBind e (Rule m) g
       , forall k. (MonadAssume   e m k) => MonadAssume e (Rule m) k
       , forall p. (MonadProperty e p m) => MonadProperty e p (Rule m)
       , MonadError e m
-      , GetErr m
+      , GetErr (m)
       , GetErr (Rule m)
       , e ~ Err m
       , Err m ~ Err (Rule m)

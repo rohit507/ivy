@@ -145,6 +145,7 @@ bindVarS v t = do
   when (dirty) $ do
     -- traceShowM =<< (('b','1',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',depChange,dirty,) <$> use dependencies)
+    -- traceShowM ('b','d',depChange,dirty)
     markDirty . toExID =<< getRepresentative v'
     -- traceShowM =<< (('b','2',) <$> use ruleHistories)
     -- traceShowM =<< (('b','d',) <$> use dependencies)
@@ -169,11 +170,14 @@ redirectVarS old new = do
     getDependencies @m to' >>= traverse_ (manageDependencies to' tn')
     getDependents   @m tn' >>= traverse_ (manageDependents   to' tn')
     -- traceM "rv4"
+    mo <- lookupVarS o'
+    mn <- lookupVarS n'
+    let dirty = not . fromMaybe False $ (liftEq (==) <$> mn <*> mo)
     to' `dependsOn` tn'
     -- lookupVarS o' >>= setTermValue n'
     setTermState o' $ Forwarded n'
     -- traceShowM =<< (('r',to',tn',) <$> use dependencies)
-    markDirty tn'
+    when dirty $ markDirty tn'
     -- traceM "rv4.5"
   -- traceM "rv5"
   n'' <- getRepresentative n'
@@ -722,8 +726,8 @@ runRule :: forall m. (BSMC m, Show (Err m))
 runRule rm rule = do
   r <- getIntBindT . observeAllT . flip runStateT rm  . runExceptT . exec $ rule
   let annotated = zipWith (\ i (a, b) -> (a, insertID i b)) [0..] r
-      parsed   = map parseResults annotated
-      filtered = catMaybes parsed
+  parsed <- traverse parseResults annotated
+  let filtered = catMaybes parsed
   pure filtered
 
   where
@@ -743,11 +747,10 @@ runRule rm rule = do
     exec = execRule (addToWatched (-1)) (liftRT . lookupVar)
 
     parseResults :: (Either (Err m) (Either () (RuleT (IntBindT m) ())), RuleMeta)
-                 -> Maybe (RuleMeta, RuleIB m ())
-    parseResults (Left e,_) = trace ("Rule Threw Error : " <> show e) $
-      Nothing
-    parseResults (Right (Left ()), _) = Nothing
-    parseResults (Right (Right r), rm) = Just (rm, r)
+                 -> BSM m (Maybe (RuleMeta, RuleIB m ()))
+    parseResults (Left e,_) = throwError e
+    parseResults (Right (Left ()), _) = pure $ Nothing
+    parseResults (Right (Right r), rm) = pure $ Just (rm, r)
 
 
 -- TODO :: Okay, the issue is that we are not properly preserving the full,
