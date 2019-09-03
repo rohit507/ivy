@@ -48,7 +48,7 @@ import qualified Control.Monad.Fail as F (fail)
 type BSM = RWST Context () BindingState
 
 type BSEC e = (Typeable e, Show e)
-type BSMC m = (Monad m, Typeable m, GetErr m, Show (Err m))
+type BSMC m = (Monad m, Typeable m, GetErr m, Show (Err m), MonadError (Err m) m)
 
 type BSTC t = (Traversable t, Typeable t, Eq1 t, Functor t)
 

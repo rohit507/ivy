@@ -349,10 +349,10 @@ prt_failSudoku = do
     y <- forAll $ Gen.element nums
     n <- forAll $ Gen.element nums
     lift $ setCell b n (x,y)
-    traceM $ "setting : " <> show ((x,y),n)
-    traceM =<< (lift $ printBoard b)
+    --traceM $ "setting : " <> show ((x,y),n)
+    --traceM =<< (lift $ printBoard b)
     annotate =<< (lift $ convertString <$> printBoard b)
   skip
 
 hprop_failSudoku :: H.Property
-hprop_failSudoku = mkProp $ prt_failSudoku
+hprop_failSudoku = mkFailProp $ prt_failSudoku

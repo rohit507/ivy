@@ -721,7 +721,7 @@ getPropMap t = do
 
 -- | given an initial rule, run a single step and return all the (potentially
 --   new) rule.
-runRule :: forall m. (BSMC m, Show (Err m))
+runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
   r <- getIntBindT . observeAllT . flip runStateT rm  . runExceptT . exec $ rule
@@ -851,7 +851,8 @@ triggerRule rid = lookupRule rid >>= \case
 -- | adds a term to the watchlist and the history
 addToWatched :: forall m t. (BSMTC m t) => Int -> VarIB m t -> RTIB m ()
 addToWatched i t = do
-  watched %= HS.insert (toExID $ forceTID t)
+  --watched %= HS.insert (toExID $ forceTID t)
+  watched .= HS.singleton (toExID $ forceTID t)
   history . nextStep %= (<> [(toExID $ forceTID t,i)])
 
 markDirty :: forall m. (BSMC m) => ExID -> BSM m ()
