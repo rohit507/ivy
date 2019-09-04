@@ -345,7 +345,7 @@ newRuleMeta rid = RuleMeta (RuleHistory rid []) mempty mempty
 
 data LookF a where
   Lookup :: (MonadBind (Err m) m t)
-    => TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
+    => Int -> TypeRep m -> TypeRep t -> Var m t -> LookF (Maybe (t (Var m t)))
 
 
 type RT m = ExceptT (Err m) (StateT RuleMeta (LogicT m))
@@ -396,15 +396,15 @@ liftRTP :: (Monad m) => m a -> RTP m a
 liftRTP = lift . liftRT
 
 execRule :: forall m a. (Monad m, Typeable m)
-         => (forall t. (MonadBind (Err m) m t) => Var m t -> RT m ())
+         => (forall t. (MonadBind (Err m) m t) => Int -> Var m t -> RT m ())
          -> (forall t. (MonadBind (Err m) m t) => Var m t -> RT m (Maybe (t (Var m t))))
          -> RuleT m a -> RT m (Either a (RuleT m a))
 execRule note lookup act = (viewT . getRuleT $ act) >>= \case
   Return a -> pure $ Left a
-  (Lookup tm __ v) :>>= f -> fromMaybe (panic "unreachable") $ do
+  (Lookup i tm __ v) :>>= f -> fromMaybe (panic "unreachable") $ do
       HRefl <- eqTypeRep tm (typeRep @m)
       pure $ do
-        note v
+        note i v
         pure . Right . RuleT $ (lift $ lookup v) >>= f
 
 makeFieldsNoPrefix ''Context

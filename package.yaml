@@ -38,6 +38,7 @@ dependencies:
   - operational
   - logict
   - mmorph
+  - template-haskell
   - prettyprinter
   - data-partition
 

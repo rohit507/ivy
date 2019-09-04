@@ -150,7 +150,7 @@ setCell hm v ind = case HM.lookup ind hm of
   Just a -> do
     -- traceM $ "Setting Cell : " <> show (v,ind,a)
     _ <- bindVar a (ConstF v)
-    -- traceShowM =<< lookupVar r
+    -- traceShowM =<< $lookupVar r
     skip
 
 
@@ -176,7 +176,7 @@ optRule :: forall m. (MonadRule Text m
                     )
   => GVar m -> Rule m ()
 optRule vg = do
-  Just (Group hs) <- lookupVar vg
+  Just (Group hs) <- $lookupVar vg
   let cvars = HS.toList hs
       optPairs = [(x,y) | x <- cvars, y <- cvars, x /= y]
       updateSingles = map updateSingle cvars
@@ -193,12 +193,12 @@ optRule vg = do
     --   param is fixed.
     updateOpt :: CVar m -> CVar m -> Rule m ()
     updateOpt vc vgm = do
-      Just (ConstF i) <- lookupVar vc
+      Just (ConstF i) <- $lookupVar vc
       vo <- Opts `propertyOf` vgm
       -- FIXME :: We can't create a new variable and perform unification since
       --         that variable (and its dirtiness) persists past after the
       --         rule runs, making it run again.
-      v <- lookupVar vo >>= \case
+      v <- $lookupVar vo >>= \case
         Nothing -> pure $ HS.fromList nums
         Just (Options hs) -> pure hs
       _ <- bindVar vo (Options $ HS.difference v (HS.singleton i))
@@ -208,7 +208,7 @@ optRule vg = do
     updateSingle :: CVar m -> Rule m ()
     updateSingle vc = do
       vo <- Opts `propertyOf` vc
-      Just (Options hs) <- lookupVar vo
+      Just (Options hs) <- $lookupVar vo
       case HS.toList hs of
         (i:[]) ->do
           bindVar vc (ConstF i) *> skip
@@ -256,11 +256,11 @@ getCell b ind = case HM.lookup ind b of
 
 getCell' :: forall m. (BoardCons m)
         => CVar m -> m CellData
-getCell' vc = lookupVar vc >>= \case
+getCell' vc = $lookupVar vc >>= \case
   Just (ConstF i) -> pure $ Left i
   Nothing -> do
     vo <- Opts `propertyOf` vc
-    lookupVar vo >>= \case
+    $lookupVar vo >>= \case
       Just (Options hs) -> pure $ Right hs
       Nothing -> pure . Right . HS.fromList $ nums
 

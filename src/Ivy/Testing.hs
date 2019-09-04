@@ -30,7 +30,7 @@ import Ivy.MonadClasses
 instance (MonadBind e m t) => MonadBind e (PropertyT m) t where
   type Var (PropertyT m) = Var m
   freeVar = lift freeVar
-  lookupVar a = lift $ lookupVar a
+  lookupVar' n a = lift $ lookupVar' n a
   bindVar a t = lift $ bindVar a t
   redirectVar a b = lift $ redirectVar a b
   freshenVar a = lift $ freshenVar a

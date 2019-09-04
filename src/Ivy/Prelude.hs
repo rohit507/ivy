@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 {-|
 Module      : Ivy.Prelude
@@ -27,6 +28,7 @@ module Ivy.Prelude (
   , GetErr(..)
   , crushThese
   , foldToList
+  , liftLoc
 ) where
 
 import Intro hiding (Item)
@@ -55,6 +57,10 @@ import Control.Monad.Operational as P hiding (view)
 import Control.Monad.Logic as P hiding (fail)
 import Data.Constraint.Unsafe
 import qualified Control.Monad.Fail as B (fail,MonadFail)
+import Language.Haskell.TH as P hiding (Type, Strict)
+import qualified Language.Haskell.TH.Syntax as TH (Lift(lift))
+
+deriving instance Hashable Loc
 
 foldToList :: (Foldable f) => f a -> [a]
 foldToList = foldr (:) []
@@ -80,6 +86,18 @@ instance (Show a) => Show (TypeMap (OfType a)) where
 
 errEq :: forall e m. (MonadError e m) :- (e ~ Err m)
 errEq = unsafeCoerceConstraint
+
+-- | Lift a location into an Exp.
+--
+-- @since 0.3.1
+liftLoc :: Loc -> Q Exp
+liftLoc (Loc a b c (d1, d2) (e1, e2)) = [|Loc
+    $(TH.lift a)
+    $(TH.lift b)
+    $(TH.lift c)
+    ($(TH.lift d1), $(TH.lift d2))
+    ($(TH.lift e1), $(TH.lift e2))
+    |]
 
 class GetErr (m :: Type -> Type) where
   type Err m :: Type

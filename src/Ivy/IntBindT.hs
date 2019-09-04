@@ -82,8 +82,8 @@ instance (BSEMTC e m r)
   freeVar :: IntBindT m (VarIB m r)
   freeVar = IntBindT $ force @(VarIB m r) <$> (freeVarS @m @r)
 
-  lookupVar :: VarIB m r -> IntBindT m (Maybe (r (VarIB m r)))
-  lookupVar
+  lookupVar' :: Int -> VarIB m r -> IntBindT m (Maybe (r (VarIB m r)))
+  lookupVar' _
     = IntBindT
     . map (map . map $ force @(VarIB m r))
     . lookupVarS @m @r
@@ -394,7 +394,7 @@ instance (MonadBind e m t, GetErr m, Err m ~ e) => MonadBind e (RuleT m) t where
 
   bindVar a b = lift $ bindVar a b
 
-  lookupVar a = RuleT . singleton $ Lookup (typeRep @m) typeRep a
+  lookupVar' n a = RuleT . singleton $ Lookup n (typeRep @m) typeRep a
 
   redirectVar a b = lift $ redirectVar a b
 
@@ -725,8 +725,7 @@ runRule :: forall m. (BSMC m)
   => RuleMeta -> RuleIB m () -> BSM m [(RuleMeta, RuleIB m ())]
 runRule rm rule = do
   r <- getIntBindT . observeAllT . flip runStateT rm  . runExceptT . exec $ rule
-  let annotated = zipWith (\ i (a, b) -> (a, insertID i b)) [0..] r
-  parsed <- traverse parseResults annotated
+  parsed <- traverse parseResults r
   let filtered = catMaybes parsed
   pure filtered
 
@@ -744,7 +743,7 @@ runRule rm rule = do
     replaceNum _ e = e
 
     exec :: RuleIB m () -> RTIB m (Either () (RuleIB m ()))
-    exec = execRule (addToWatched (-1)) (liftRT . lookupVar)
+    exec = execRule (addToWatched) (liftRT . $lookupVar)
 
     parseResults :: (Either (Err m) (Either () (RuleT (IntBindT m) ())), RuleMeta)
                  -> BSM m (Maybe (RuleMeta, RuleIB m ()))
