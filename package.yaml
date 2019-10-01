@@ -14,33 +14,33 @@ extra-source-files:
 dependencies:
   - base >= 4.7 && < 5
   - intro
-  - text
-  - tasty
-  - tasty-discover
-  - tasty-hunit
-  - tasty-hedgehog
-  - hedgehog
-  - free
-  - lens
-  - containers
-  - monad-control
-  - unordered-containers
-  - constraints
-  - recursion-schemes
-  - data-reify
-  - type-map
-  - bimap
-  - these
-  - concurrent-supply
-  - newtype
-  - algebraic-graphs
-  - logging
-  - operational
-  - logict
-  - mmorph
-  - template-haskell
-  - prettyprinter
-  - data-partition
+  # - text
+  # - tasty
+  # - tasty-discover
+  # - tasty-hunit
+  # - tasty-hedgehog
+  # - hedgehog
+  # - free
+  # - lens
+  # - containers
+  # - monad-control
+  # - unordered-containers
+  # - constraints
+  # - recursion-schemes
+  # - data-reify
+  # - type-map
+  # - bimap
+  # - these
+  # - concurrent-supply
+  # - newtype
+  # - algebraic-graphs
+  # - logging
+  # - operational
+  # - logict
+  # - mmorph
+  # - template-haskell
+  # - prettyprinter
+  # - data-partition
 
 library:
   source-dirs: src
@@ -113,29 +113,21 @@ default-extensions:
   ViewPatterns
 
 ghc-options:
-  - -fprof-auto
-  # - -ddump-tc-trace
   - -Wall
   - -Wcompat
   - -Wincomplete-record-updates
   - -Wincomplete-uni-patterns
+  - -Wredundant-constraints
   - -Werror
-  - -Wsemigroup
   # Some of the flags enabled by Wall and propmoted by Werror really should
   # only be warnings when developing. A proper build on the other hand should
   # have no warnings attached
-  - -fno-warn-name-shadowing
-  - -fno-warn-orphans
-  # - -Wwarn=orphans
+  - -Wwarn=name-shadowing
+  - -Wwarn=orphans
   - -Wwarn=redundant-constraints
+  - -Wwarn=typed-holes
   - -Wwarn=unused-matches
   - -Wwarn=deprecations
-  - -Wwarn=unused-local-binds # TODO :: Re-enable when you feel like cleaning
-  - -Wwarn=unused-imports # TODO :: Re-enable when you feel like cleaning
+  - -Wwarn=unused-local-binds    # TODO :: Re-enable for cleaning
+  - -Wwarn=unused-imports        # TODO :: Re-enable for cleaning
   - -Wwarn=redundant-constraints # TODO :: Re-enable for cleaning
-  # - -fprint-potential-instances
-  # - -ddump-cs-trace
-  # - -ddump-splices
-  - -ddump-to-file
-  - -fprint-typechecker-elaboration
-  #- -prof
